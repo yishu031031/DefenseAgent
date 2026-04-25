@@ -1,28 +1,22 @@
-from DefenseAgent.memory.embedding import (
-    EmbeddingAdapter,
-    EmbeddingConfigError,
-    EmbeddingProviderError,
+from ms_agent.memory import memory_mapping
+
+from DefenseAgent.memory.base import (
+    Memory,
+    MemoryConfigError,
     MemoryError,
-    MemoryNotFoundError,
+    MemoryProviderError,
 )
-from DefenseAgent.memory.memory import Memory
-from DefenseAgent.memory.retriever import MemoryRetriever, ScoredMemory
-from DefenseAgent.memory.stream import (
-    MemoryKind,
-    MemoryRecord,
-    MemoryStream,
-)
+from DefenseAgent.memory.context_compressor import ContextCompressor
+from DefenseAgent.memory.default_memory import DefaultMemory
+from DefenseAgent.memory.shared import SharedMemoryManager
 
 __all__ = [
     "Memory",
-    "MemoryStream",
-    "MemoryRetriever",
-    "EmbeddingAdapter",
-    "MemoryRecord",
-    "MemoryKind",
-    "ScoredMemory",
+    "DefaultMemory",
+    "ContextCompressor",
+    "SharedMemoryManager",
+    "memory_mapping",
     "MemoryError",
-    "MemoryNotFoundError",
-    "EmbeddingConfigError",
-    "EmbeddingProviderError",
+    "MemoryConfigError",
+    "MemoryProviderError",
 ]

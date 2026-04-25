@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import AsyncIterator
+from typing import Any, AsyncIterator
 
 from DefenseAgent.llm.types import (
     LLMResponse,
@@ -8,6 +8,17 @@ from DefenseAgent.llm.types import (
     StreamEnd,
     TextDelta,
 )
+
+
+def to_dict_safe(obj: Any) -> dict:
+    """Best-effort dict conversion for the opaque SDK response object stored on .raw."""
+    for attr in ("model_dump", "to_dict"):
+        if hasattr(obj, attr):
+            try:
+                return getattr(obj, attr)()
+            except Exception:
+                pass
+    return {"repr": repr(obj)}
 
 
 class LLMAdapter(ABC):

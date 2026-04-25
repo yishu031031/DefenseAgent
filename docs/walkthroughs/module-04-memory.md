@@ -1,6 +1,32 @@
 # Module 4 Walkthrough — Memory
 
-> Companion to the [design spec](../superpowers/specs/2026-04-22-module-04-memory-design.md). The spec records **what** we decided and **why**; this walkthrough explains **how** the code implements those decisions today, after the 2026-04-24 consolidation to five files.
+> Companion to the [design spec](../superpowers/specs/2026-04-22-module-04-memory-design.md).
+
+> **Replaced (2026-04-25):** The hand-rolled hybrid retrieval / BM25 / RRF / SQLite stream described below has been **removed**. Memory is now thin adapters inheriting from `ms_agent.memory` classes over a `mem0` backend.
+>
+> ### Current state in 5 lines
+>
+> - `DefenseAgent.memory.DefaultMemory(ms_agent.DefaultMemory)` — front door; wraps mem0. `await memory.add(messages, memory_type=...)` to ingest, `memory.search_records(query, limit, memory_type)` to retrieve, `await memory.run(messages)` for ms-agent's combined ingest+search+inject contract.
+> - `DefenseAgent.memory.ContextCompressor(ms_agent.ContextCompressor)` — token-overflow compaction (prune tool outputs + LLM summary).
+> - `DefenseAgent.memory.SharedMemoryManager(ms_agent.SharedMemoryManager)` — process-wide singleton.
+> - `DefenseAgent.memory._bridge` — `profile_to_dictconfig()` (AgentProfile → omegaconf.DictConfig) and `messages_ours_to_theirs()` / `messages_theirs_to_ours()` (DefenseAgent.Message ↔ ms_agent.Message field copy at the boundary).
+> - `DefenseAgent.memory.memory_mapping` — re-export of ms-agent's registry of pluggable memory subclasses.
+>
+> ### What's gone
+>
+> `MemoryStream`, `MemoryRetriever`, `BM25Index`, `cosine`, `sqlite_store`, `MemoryRecord`, `MemoryKind`, `ScoredMemory`, `Memory.remember()`, `Memory.recall()`, `Memory.from_env()`, kind-aware recency decay, the RRF fusion, the Park-style composite scoring axes, all of it. mem0 stores plain memory strings keyed by `(user_id, agent_id, run_id, memory_type)` and ranks by cosine similarity only. Where we used to filter by `kind="reflection"`, we now filter by `memory_type="reflection"` (free-form string).
+>
+> ### What replaces it
+>
+> Tags via `memory_type`. Outcomes are tagged `"outcome"` (success) or `"failure"` (max_steps exhaustion / bad plan). Trajectory steps from ReActAgent are tagged `"trajectory"`. Reflections from the Reflector are tagged `"reflection"`. The Reflector's `_get_unreflected_records` filters mem0 records by `memory_type != "reflection"` instead of the old typed-Literal `kind` field.
+>
+> Storage is `<profile.source_dir>/memory/` with mem0 owning the contents (Qdrant on-disk by default, plus a SQLite history db). Embeddings come from the `EMBEDDING_*` env block, the LLM (used for fact extraction) from `AGENT_LAB_LLM_PROVIDER` + per-provider env block. The bridge translates both into mem0's config dict.
+>
+> ### What sections below still apply
+>
+> Sections 1–3 (problem framing, the four design ideas) are **historical reasoning** about why we built our own retrieval — preserved because the user explicitly chose to replace it with ms-agent's simpler vector-only model. Sections 4–11 (file walks of `embedding.py`, `stream.py`, `retriever.py`, `memory.py`, `sqlite_store.py`) describe code that **no longer exists**; they're left as a record of the prior implementation but should not be used as a reference for the current code.
+>
+> For the current module's behavior, read [DefenseAgent/memory/_bridge.py](../../DefenseAgent/memory/_bridge.py) (~150 LOC) and [DefenseAgent/memory/default_memory.py](../../DefenseAgent/memory/default_memory.py) (~100 LOC). The actual memory engine lives in `ms_agent/memory/default_memory.py` (~700 LOC) and `mem0`.
 
 ---
 

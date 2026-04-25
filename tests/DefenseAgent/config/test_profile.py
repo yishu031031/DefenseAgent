@@ -20,6 +20,7 @@ from DefenseAgent.config import (
     ConfigParseError,
     ConfigValidationError,
     MemoryConfig,
+    PromptConfig,
 )
 
 
@@ -103,46 +104,85 @@ def test_cognitive_config_rejects_empty_planning_horizon():
 
 def test_memory_config_defaults_when_empty():
     cfg = MemoryConfig()
-    assert cfg.max_working_memory_tokens == 4000
-    assert cfg.retrieval_top_k == 10
-    assert cfg.recency_weight == 1.0
-    assert cfg.importance_weight == 1.0
-    assert cfg.relevance_weight == 1.0
+    assert cfg.search_limit == 10
+    assert cfg.history_mode == "add"
+    assert cfg.is_retrieve is True
+    assert cfg.context_limit == 128_000
+    assert cfg.enable_summary is True
 
 
 def test_memory_config_accepts_overrides():
     cfg = MemoryConfig(
-        max_working_memory_tokens=8000, retrieval_top_k=5,
-        recency_weight=0.5, importance_weight=2.0, relevance_weight=1.5,
+        search_limit=5, history_mode="overwrite",
+        context_limit=64_000, enable_summary=False,
     )
-    assert cfg.max_working_memory_tokens == 8000
-    assert cfg.retrieval_top_k == 5
-    assert cfg.recency_weight == 0.5
-    assert cfg.importance_weight == 2.0
-    assert cfg.relevance_weight == 1.5
+    assert cfg.search_limit == 5
+    assert cfg.history_mode == "overwrite"
+    assert cfg.context_limit == 64_000
+    assert cfg.enable_summary is False
 
 
 @pytest.mark.parametrize("field,bad_value", [
-    ("max_working_memory_tokens", 0),
-    ("retrieval_top_k", 0),
-    ("recency_weight", -0.1),
-    ("importance_weight", -1),
-    ("relevance_weight", -2.5),
+    ("search_limit", 0),
+    ("context_limit", 100),
+    ("history_mode", "delete"),
 ])
 def test_memory_config_rejects_out_of_range(field, bad_value):
     with pytest.raises(ValidationError):
         MemoryConfig(**{field: bad_value})
 
 
-def test_memory_config_allows_zero_weight():
-    """Zero is a valid weight — user can disable one term of the retrieval score."""
-    cfg = MemoryConfig(recency_weight=0.0, importance_weight=0.0, relevance_weight=0.0)
-    assert cfg.recency_weight == 0.0
+def test_memory_config_allows_storage_path_override():
+    """An explicit storage_path bypasses profile.source_dir resolution at construction time."""
+    cfg = MemoryConfig(storage_path="/tmp/custom/memory")
+    assert cfg.storage_path == "/tmp/custom/memory"
 
 
 def test_memory_config_rejects_unknown_key():
     with pytest.raises(ValidationError):
         MemoryConfig(extra_knob=1)
+
+
+# ---- PromptConfig ----
+
+
+def test_prompt_config_defaults_to_all_none():
+    cfg = PromptConfig()
+    assert cfg.system is None
+    assert cfg.path is None
+    assert cfg.extra_instructions is None
+
+
+def test_prompt_config_accepts_overrides():
+    cfg = PromptConfig(
+        system="You are {name}.",
+        path="prompts/system.md",
+        extra_instructions="Be terse.",
+    )
+    assert cfg.system == "You are {name}."
+    assert cfg.path == "prompts/system.md"
+    assert cfg.extra_instructions == "Be terse."
+
+
+def test_prompt_config_rejects_unknown_key():
+    with pytest.raises(ValidationError):
+        PromptConfig(model="gpt-4")
+
+
+def test_agent_profile_includes_prompt_block_with_default_factory():
+    profile = AgentProfile(**_minimal_identity())
+    assert isinstance(profile.prompt, PromptConfig)
+    assert profile.prompt.system is None
+    assert profile.prompt.path is None
+
+
+def test_agent_profile_accepts_nested_prompt_block():
+    profile = AgentProfile(
+        **_minimal_identity(),
+        prompt={"system": "You are {name}.", "extra_instructions": "Be terse."},
+    )
+    assert profile.prompt.system == "You are {name}."
+    assert profile.prompt.extra_instructions == "Be terse."
 
 
 # ---- AgentProfile (direct construction) ----
@@ -164,18 +204,18 @@ def test_agent_profile_minimal_fills_defaults():
     assert profile.age == 28
     # Nested blocks default-populated
     assert profile.cognitive.max_steps_per_cycle == 10
-    assert profile.memory.retrieval_top_k == 10
+    assert profile.memory.search_limit == 10
 
 
 def test_agent_profile_nested_overrides():
     profile = AgentProfile(
         **_minimal_identity(),
         cognitive={"max_steps_per_cycle": 3},
-        memory={"retrieval_top_k": 2},
+        memory={"search_limit": 2},
     )
     assert profile.cognitive.max_steps_per_cycle == 3
     assert profile.cognitive.reflection_threshold == 5  # other fields still default
-    assert profile.memory.retrieval_top_k == 2
+    assert profile.memory.search_limit == 2
 
 
 @pytest.mark.parametrize("missing_field", [
@@ -252,11 +292,10 @@ agent:
     importance_threshold: 7.5
     planning_horizon: "2 days"
   memory:
-    max_working_memory_tokens: 8000
-    retrieval_top_k: 15
-    recency_weight: 2.0
-    importance_weight: 0.5
-    relevance_weight: 1.5
+    search_limit: 15
+    history_mode: overwrite
+    context_limit: 64000
+    enable_summary: false
 """
 
 
@@ -276,7 +315,7 @@ def test_minimal_yaml_loads_with_defaults(tmp_path):
     assert profile.name == "Alice"
     # Cognitive & memory default blocks:
     assert profile.cognitive.max_steps_per_cycle == 10
-    assert profile.memory.retrieval_top_k == 10
+    assert profile.memory.search_limit == 10
 
 
 def test_full_yaml_loads_all_fields(tmp_path):
@@ -285,8 +324,10 @@ def test_full_yaml_loads_all_fields(tmp_path):
     assert profile.age == 28
     assert profile.cognitive.max_steps_per_cycle == 8
     assert profile.cognitive.planning_horizon == "2 days"
-    assert profile.memory.max_working_memory_tokens == 8000
-    assert profile.memory.recency_weight == 2.0
+    assert profile.memory.search_limit == 15
+    assert profile.memory.history_mode == "overwrite"
+    assert profile.memory.context_limit == 64000
+    assert profile.memory.enable_summary is False
 
 
 def test_from_yaml_accepts_string_path(tmp_path):
@@ -375,6 +416,27 @@ def test_unknown_key_raises_validation_error(tmp_path):
 
 def test_unknown_nested_key_raises_validation_error(tmp_path):
     bad = _MINIMAL_YAML + "  cognitive:\n    max_steps_per_cycle: 5\n    mystery: 1\n"
+    with pytest.raises(ConfigValidationError):
+        AgentProfile.from_yaml(_write(tmp_path, bad))
+
+
+# ---- YAML prompt block ----
+
+
+def test_yaml_with_prompt_block_loads(tmp_path):
+    yaml_text = _MINIMAL_YAML + (
+        "  prompt:\n"
+        "    system: \"You are {name}.\"\n"
+        "    extra_instructions: \"Be terse.\"\n"
+    )
+    profile = AgentProfile.from_yaml(_write(tmp_path, yaml_text))
+    assert profile.prompt.system == "You are {name}."
+    assert profile.prompt.extra_instructions == "Be terse."
+    assert profile.prompt.path is None
+
+
+def test_yaml_unknown_prompt_key_raises_validation_error(tmp_path):
+    bad = _MINIMAL_YAML + "  prompt:\n    bogus_field: 1\n"
     with pytest.raises(ConfigValidationError):
         AgentProfile.from_yaml(_write(tmp_path, bad))
 

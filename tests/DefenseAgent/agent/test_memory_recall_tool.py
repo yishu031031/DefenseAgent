@@ -3,12 +3,12 @@ import pytest
 
 from DefenseAgent.agent import MEMORY_RECALL_TOOL_NAME, ReActAgent
 from DefenseAgent.llm.types import ToolCall
-from DefenseAgent.memory import Memory
+
 from DefenseAgent.tools import ToolRegistry
 
 from tests.DefenseAgent.agent._support import (
     ScriptedLLM,
-    ZeroEmbedder,
+    fake_memory,
     make_profile,
     resp,
 )
@@ -19,7 +19,7 @@ from tests.DefenseAgent.agent._support import (
 
 def test_memory_recall_appears_in_combined_tool_specs():
     profile = make_profile()
-    memory = Memory(profile=profile, embedding_adapter=ZeroEmbedder())
+    memory = fake_memory(profile)
     agent = ReActAgent(
         profile,
         llm=ScriptedLLM([]),  # type: ignore[arg-type]
@@ -39,7 +39,7 @@ def test_memory_recall_appears_in_combined_tool_specs():
 
 def test_user_tools_appear_before_agent_builtins_in_spec():
     profile = make_profile()
-    memory = Memory(profile=profile, embedding_adapter=ZeroEmbedder())
+    memory = fake_memory(profile)
     registry = ToolRegistry()
 
     @registry.tool
@@ -68,12 +68,10 @@ def test_user_tools_appear_before_agent_builtins_in_spec():
 
 async def test_llm_can_invoke_memory_recall_and_receive_hits():
     profile = make_profile()
-    memory = Memory(profile=profile, embedding_adapter=ZeroEmbedder())
-    await memory.remember(
-        "Maya prefers studying in the library.",
-        kind="preference",
-        importance=7.0,
-    )
+    memory = fake_memory(profile)
+    memory.search_records.return_value = [
+        {"memory": "Maya prefers studying in the library.", "memory_type": "preference"},
+    ]
 
     llm = ScriptedLLM(
         [
@@ -112,7 +110,7 @@ async def test_llm_can_invoke_memory_recall_and_receive_hits():
 
 async def test_memory_recall_empty_returns_diagnostic_not_crash():
     profile = make_profile()
-    memory = Memory(profile=profile, embedding_adapter=ZeroEmbedder())
+    memory = fake_memory(profile)
     llm = ScriptedLLM(
         [
             resp(
@@ -146,7 +144,7 @@ async def test_memory_recall_empty_returns_diagnostic_not_crash():
 
 async def test_memory_recall_empty_query_is_handled_gracefully():
     profile = make_profile()
-    memory = Memory(profile=profile, embedding_adapter=ZeroEmbedder())
+    memory = fake_memory(profile)
     llm = ScriptedLLM(
         [
             resp(
@@ -180,7 +178,7 @@ async def test_memory_recall_empty_query_is_handled_gracefully():
 async def test_memory_recall_top_k_is_clamped():
     """top_k is coerced to int and clamped to [1, 20]; extreme values must not crash."""
     profile = make_profile()
-    memory = Memory(profile=profile, embedding_adapter=ZeroEmbedder())
+    memory = fake_memory(profile)
     agent = ReActAgent(
         profile,
         llm=ScriptedLLM([]),  # type: ignore[arg-type]
@@ -206,8 +204,10 @@ async def test_memory_recall_top_k_is_clamped():
 
 async def test_dispatch_preserves_order_across_user_and_agent_tools():
     profile = make_profile()
-    memory = Memory(profile=profile, embedding_adapter=ZeroEmbedder())
-    await memory.remember("cached fact", kind="fact", importance=5.0)
+    memory = fake_memory(profile)
+    memory.search_records.return_value = [
+        {"memory": "cached fact", "memory_type": "fact"},
+    ]
 
     registry = ToolRegistry()
 

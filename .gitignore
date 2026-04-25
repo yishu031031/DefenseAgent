@@ -10,4 +10,9 @@ venv/
 .ruff_cache/
 .mypy_cache/
 logs/
+*.log
 agents/*/memory/
+
+# Local copies of upstream projects kept for reference; install via pip instead.
+ms_agent/
+ms-agent-skills/

@@ -28,14 +28,15 @@ agent:
     importance_threshold: 6
     planning_horizon: "1 day"
 
-  # Retrieval weighted slightly toward relevance + importance vs recency,
-  # since study memories stay useful well beyond when they were formed.
+  # Memory backed by mem0 (per ms-agent's scheme). storage_path defaults to
+  # <profile.source_dir>/memory/. search_limit caps results per recall.
   memory:
-    max_working_memory_tokens: 3000
-    retrieval_top_k: 8
-    recency_weight: 1.0
-    importance_weight: 1.2
-    relevance_weight: 1.5
+    search_limit: 8
+    history_mode: add
+    context_limit: 64000
+    prune_protect: 20000
+    prune_minimum: 10000
+    reserved_buffer: 10000
 
   # Per-agent tools: paths under `skills` are resolved relative to this
   # profile's directory. Each `mcp` entry is a stdio launch config.
@@ -43,3 +44,11 @@ agent:
     skills:
       - skills/tabular-report
     mcp: []
+
+  # System prompt configuration. Precedence (highest first):
+  #   1. `system` — inline string with {placeholders}
+  #   2. `path`   — file relative to this profile's directory
+  #   3. fallback to auto-built identity block in code
+  # Available placeholders: {id} {name} {age} {traits} {backstory} {initial_plan}
+  prompt:
+    path: prompts/system.md

@@ -2,7 +2,7 @@ from typing import Any
 
 from anthropic import AsyncAnthropic
 
-from DefenseAgent.llm.base import LLMAdapter
+from DefenseAgent.llm.base import LLMAdapter, to_dict_safe
 from DefenseAgent.llm.errors import LLMAdapterError, LLMProviderError
 from DefenseAgent.llm.types import (
     LLMResponse,
@@ -32,16 +32,11 @@ class AnthropicAdapter(LLMAdapter):
         self.model = model
         if client is not None:
             self._client = client
-        else:
-            kwargs: dict[str, Any] = {"api_key": api_key or None}
-            if base_url:
-                kwargs["base_url"] = base_url
-            self._client = AsyncAnthropic(**kwargs)
-
-    @property
-    def _model(self) -> str:
-        """Alias retained for backwards compatibility with callers reading adapter._model."""
-        return self.model
+            return
+        kwargs: dict[str, Any] = {"api_key": api_key or None}
+        if base_url:
+            kwargs["base_url"] = base_url
+        self._client = AsyncAnthropic(**kwargs)
 
     async def chat(
         self,
@@ -109,7 +104,7 @@ class AnthropicAdapter(LLMAdapter):
         yield StreamEnd(
             stop_reason=stop_reason,
             usage=TokenUsage(prompt_tokens=pt, completion_tokens=ct, total_tokens=pt + ct),
-            raw=_to_dict_safe(final),
+            raw=to_dict_safe(final),
         )
 
     def _build_request(
@@ -209,16 +204,5 @@ def _parse_response(response: Any) -> LLMResponse:
         tool_calls=tool_calls,
         usage=TokenUsage(prompt_tokens=pt, completion_tokens=ct, total_tokens=pt + ct),
         stop_reason=stop_reason,
-        raw=_to_dict_safe(response),
+        raw=to_dict_safe(response),
     )
-
-
-def _to_dict_safe(obj: Any) -> dict:
-    """Best-effort dict conversion for the opaque SDK response object stored on .raw."""
-    for attr in ("model_dump", "to_dict"):
-        if hasattr(obj, attr):
-            try:
-                return getattr(obj, attr)()
-            except Exception:
-                pass
-    return {"repr": repr(obj)}

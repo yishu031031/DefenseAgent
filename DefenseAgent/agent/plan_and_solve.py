@@ -1,17 +1,18 @@
 import re
 
-from DefenseAgent.agent.agent import (
-    Agent,
+from DefenseAgent.agent.base import (
     AgentError,
     AgentResult,
     AgentStep,
+    BaseAgent,
+    FAILURE_MEMORY_TYPE,
     add_usage,
     truncate,
 )
 from DefenseAgent.config.profile import AgentProfile
 from DefenseAgent.llm.llm import LLM
 from DefenseAgent.llm.types import Message, TokenUsage
-from DefenseAgent.memory import Memory
+from DefenseAgent.memory import ContextCompressor, DefaultMemory
 from DefenseAgent.ops import AgentLogger
 from DefenseAgent.reflection import Reflector
 from DefenseAgent.tools import ToolRegistry
@@ -45,10 +46,8 @@ the plan; just give the user-facing answer."""
 
 _STEP_LINE_RE = re.compile(r"^\s*\d+[\.)]\s*(.+?)\s*$")
 
-_FAILURE_OUTCOME_IMPORTANCE = 6.0
 
-
-class PlanAndSolveAgent(Agent):
+class PlanAndSolveAgent(BaseAgent):
     """Wang et al. 2023 — plan the task into discrete steps, execute each with tools, then synthesize the final answer."""
 
     def __init__(
@@ -56,10 +55,11 @@ class PlanAndSolveAgent(Agent):
         profile: AgentProfile,
         *,
         llm: LLM,
-        memory: Memory,
+        memory: DefaultMemory,
         tools: ToolRegistry,
         reflector: Reflector | None = None,
         logger: AgentLogger | None = None,
+        compactor: ContextCompressor | None = None,
         memory_recall_top_k: int = 5,
         max_substeps_per_step: int = 3,
         persist_outcome: bool = True,
@@ -73,6 +73,7 @@ class PlanAndSolveAgent(Agent):
             tools=tools,
             reflector=reflector,
             logger=logger,
+            compactor=compactor,
         )
         self.memory_recall_top_k = memory_recall_top_k
         self.max_substeps_per_step = max_substeps_per_step
@@ -93,18 +94,19 @@ class PlanAndSolveAgent(Agent):
         )
 
         try:
-            memories = await self._recall_memories(task, self.memory_recall_top_k)
-            memory_block = self._memory_block(memories)
             identity = self._identity_prompt()
 
             steps: list[AgentStep] = []
             total = TokenUsage(0, 0, 0)
 
             # Phase 1 — plan.
-            plan_system = _join_blocks(identity, memory_block)
+            plan_messages = [
+                Message(role="user", content=_PLAN_PROMPT_TEMPLATE.format(task=task)),
+            ]
+            plan_messages = await self._condense_memory(plan_messages)
             plan_response = await self.llm.chat(
-                [Message(role="user", content=_PLAN_PROMPT_TEMPLATE.format(task=task))],
-                system=plan_system,
+                plan_messages,
+                system=identity,
             )
             total = add_usage(total, plan_response.usage)
             plan = _parse_plan(plan_response.content)
@@ -123,7 +125,7 @@ class PlanAndSolveAgent(Agent):
             self._log("info", "agent.plan", "plan produced", step_count=len(plan))
 
             # Phase 2 — execute each step.
-            exec_system = _join_blocks(identity, memory_block, _EXEC_INSTRUCTIONS)
+            exec_system = _join_blocks(identity, _EXEC_INSTRUCTIONS)
             tool_specs = self._combined_tool_specs()
             step_outputs: list[str] = []
             for plan_index, plan_step in enumerate(plan):
@@ -143,16 +145,18 @@ class PlanAndSolveAgent(Agent):
                 f"{i + 1}. {plan[i]}\n   → {step_outputs[i]}"
                 for i in range(len(plan))
             )
+            synthesis_messages = [
+                Message(
+                    role="user",
+                    content=_SYNTHESIS_PROMPT_TEMPLATE.format(
+                        task=task, plan_with_results=plan_with_results,
+                    ),
+                )
+            ]
+            synthesis_messages = await self._condense_memory(synthesis_messages)
             synthesis_response = await self.llm.chat(
-                [
-                    Message(
-                        role="user",
-                        content=_SYNTHESIS_PROMPT_TEMPLATE.format(
-                            task=task, plan_with_results=plan_with_results,
-                        ),
-                    )
-                ],
-                system=plan_system,
+                synthesis_messages,
+                system=identity,
             )
             total = add_usage(total, synthesis_response.usage)
             steps.append(
@@ -182,7 +186,7 @@ class PlanAndSolveAgent(Agent):
                 await self._persist_outcome(
                     task,
                     f"FAILED: {truncate(str(e), 200)}",
-                    importance=_FAILURE_OUTCOME_IMPORTANCE,
+                    memory_type=FAILURE_MEMORY_TYPE,
                 )
             raise
         finally:
@@ -212,6 +216,7 @@ class PlanAndSolveAgent(Agent):
         sub_total = TokenUsage(0, 0, 0)
 
         for _ in range(self.max_substeps_per_step):
+            messages = await self._condense_memory(messages)
             response = await self.llm.chat(
                 messages, system=exec_system, tools=tool_specs,
             )

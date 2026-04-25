@@ -137,16 +137,14 @@ class ToolRegistry:
 
     def spec(self) -> list[dict[str, Any]]:
         """Return every registered tool as a canonical {name, description, input_schema} dict for the LLM."""
-        specs: list[dict[str, Any]] = []
-        for tool in self._tools.values():
-            specs.append(
-                {
-                    "name": tool.name,
-                    "description": tool.description,
-                    "input_schema": tool.input_schema,
-                }
-            )
-        return specs
+        return [
+            {
+                "name": t.name,
+                "description": t.description,
+                "input_schema": t.input_schema,
+            }
+            for t in self._tools.values()
+        ]
 
     async def execute(self, tool_calls: list[ToolCall]) -> list[Message]:
         """Run every ToolCall concurrently; return one role='tool' Message per call (errors become error messages)."""
@@ -203,20 +201,12 @@ def _schema_from_signature(func: Callable[..., Any]) -> dict[str, Any]:
     properties: dict[str, Any] = {}
     required: list[str] = []
     for param_name, param in sig.parameters.items():
-        if param.kind in (
-            inspect.Parameter.VAR_POSITIONAL,
-            inspect.Parameter.VAR_KEYWORD,
-        ):
+        if param.kind in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD):
             continue
-        if param.annotation is inspect.Parameter.empty:
-            annotation: Any = str
-        else:
-            annotation = param.annotation
-        if annotation in _PY_TYPE_TO_JSON:
-            json_type = _PY_TYPE_TO_JSON[annotation]
-        else:
-            json_type = "string"
-        properties[param_name] = {"type": json_type}
+        annotation: Any = (
+            param.annotation if param.annotation is not inspect.Parameter.empty else str
+        )
+        properties[param_name] = {"type": _PY_TYPE_TO_JSON.get(annotation, "string")}
         if param.default is inspect.Parameter.empty:
             required.append(param_name)
     schema: dict[str, Any] = {"type": "object", "properties": properties}
@@ -232,12 +222,5 @@ def _wrap_python_handler(func: Callable[..., Any]) -> ToolHandler:
             result = await func(**arguments)
         else:
             result = await asyncio.to_thread(lambda: func(**arguments))
-        return _stringify(result)
+        return result if isinstance(result, str) else str(result)
     return handler
-
-
-def _stringify(value: Any) -> str:
-    """Return `value` as a string (passes strings through; `str()` everything else)."""
-    if isinstance(value, str):
-        return value
-    return str(value)

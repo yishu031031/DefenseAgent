@@ -1,17 +1,19 @@
-from DefenseAgent.agent.agent import (
-    Agent,
+from DefenseAgent.agent.base import (
     AgentError,
     AgentResult,
     AgentStep,
     AgentStepLimitError,
+    BaseAgent,
     MEMORY_RECALL_TOOL_NAME,
     StepKind,
 )
 from DefenseAgent.agent.plan_and_solve import PlanAndSolveAgent
 from DefenseAgent.agent.react import ReActAgent
+from DefenseAgent.agent.simple import SimpleAgent
 
 __all__ = [
-    "Agent",
+    "BaseAgent",
+    "SimpleAgent",
     "ReActAgent",
     "PlanAndSolveAgent",
     "AgentResult",

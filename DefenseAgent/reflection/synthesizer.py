@@ -1,11 +1,11 @@
 import re
+from typing import Any
 
 from DefenseAgent.llm import LLM, Message
-from DefenseAgent.memory import MemoryRecord
 
 
 _REFLECTION_PROMPT = """\
-Recent memories (chronological):
+Recent memories:
 {memory_list}
 
 Given the memories above, produce exactly {n} high-level insights about
@@ -29,17 +29,21 @@ def parse_reflection_response(text: str, n: int) -> list[str]:
     return cleaned[:n]
 
 
-def format_memories_for_prompt(records: list[MemoryRecord]) -> str:
-    """Render records chronologically as `- [kind, imp=X.Y] content` lines."""
-    chronological = sorted(records, key=lambda r: r.timestamp)
+def format_memories_for_prompt(records: list[dict[str, Any]]) -> str:
+    """Render mem0 records as `- [memory_type] content` lines (memory_type may be missing)."""
     lines: list[str] = []
-    for r in chronological:
-        lines.append(f"- [{r.kind}, imp={r.importance:.1f}] {r.content}")
+    for r in records:
+        memory_type = r.get("memory_type")
+        if memory_type is None:
+            metadata = r.get("metadata") or {}
+            memory_type = metadata.get("memory_type", "observation")
+        content = r.get("memory", "")
+        lines.append(f"- [{memory_type}] {content}")
     return "\n".join(lines)
 
 
 class InsightSynthesizer:
-    """Ask an LLM to synthesize high-level insights from a list of memory records."""
+    """Ask an LLM to synthesize high-level insights from a list of mem0 memory records."""
 
     def __init__(
         self,
@@ -55,8 +59,8 @@ class InsightSynthesizer:
         self.temperature = temperature
         self.max_tokens = max_tokens
 
-    async def synthesize(self, records: list[MemoryRecord]) -> list[str]:
-        """Return up to `num_insights` insight strings; empty list when `records` is empty or output unparseable."""
+    async def synthesize(self, records: list[dict[str, Any]]) -> list[str]:
+        """Return up to `num_insights` insight strings from a mem0-records list; empty when input empty or output unparseable."""
         if not records:
             return []
         prompt = _REFLECTION_PROMPT.format(

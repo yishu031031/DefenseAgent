@@ -1,10 +1,25 @@
 # Module 4 — Memory (Writing, Storage, Retrieval) Design
 
 **Date:** 2026-04-22
-**Status:** Draft, awaiting user approval
+**Status:** Superseded for the implementation; the design rationale below is preserved for history.
 **Module position:** 4 of N. Foundation for the cognitive loop, which reads and writes memories every step.
 
-> **Amendment (2026-04-24): SQLite persistence.**
+> **Amendment (2026-04-25): Replaced by ms-agent inheritance + mem0 backend.**
+> The hand-rolled hybrid retrieval / RRF / kind-aware decay / SQLite persistence described in the rest of this spec **has been removed**. `DefenseAgent.memory` now consists of thin adapters that inherit from `ms_agent.memory` classes:
+>
+> - `DefenseAgent.memory.DefaultMemory(ms_agent.memory.DefaultMemory)` — wraps mem0 (vector storage, LLM fact extraction, message-block diff/rollback). Storage backend defaults to Qdrant on-disk at `<profile.source_dir>/memory/`. Retrieval is mem0's vector `search()`. The Park-style composite scoring (recency × importance × relevance), the BM25+dense RRF fusion, the typed `MemoryKind` Literal, and the kind-aware decay rules are all **gone** — mem0 doesn't model them. Memory typing now lives in mem0's free-form `memory_type` string field (e.g., `"trajectory"`, `"outcome"`, `"failure"`, `"reflection"`).
+> - `DefenseAgent.memory.ContextCompressor(ms_agent.memory.condenser.ContextCompressor)` — token-overflow compaction with prune + summarize. New capability for DefenseAgent; the original spec had no token-budget compactor.
+> - `DefenseAgent.memory.SharedMemoryManager(ms_agent.memory.memory_manager.SharedMemoryManager)` — process-wide singleton keyed by `(type, user_id, path)`.
+>
+> The boundary work (config translation `AgentProfile → omegaconf.DictConfig`, `Message ↔ ms_agent.Message` field copying) lives in `DefenseAgent.memory._bridge`. The `memory_mapping` dict re-exports ms-agent's registry of pluggable memory subclasses. Total adapter LOC: ~250 vs the ~600 we had before.
+>
+> **What broke:** `MemoryStream`, `MemoryRetriever`, `BM25Index`, `cosine`, `sqlite_store`, `MemoryRecord`, `MemoryKind`, `ScoredMemory` are deleted. `Memory.remember(content, kind=..., importance=...)` / `Memory.recall(query, top_k=...)` are gone — the new contract is `await memory.run(messages) -> messages` (ms-agent's pattern: ingest + search + inject in one call) plus `await memory.add(messages, memory_type=...)` for explicit ingestion and `memory.search_records(query, limit, memory_type)` for explicit retrieval. `MemoryConfig` lost `max_working_memory_tokens`, `retrieval_top_k`, `recency_weight`, `importance_weight`, `relevance_weight` and gained `search_limit`, `history_mode`, `context_limit`, `prune_protect`, `prune_minimum`, `reserved_buffer`, `enable_summary`, `is_retrieve`, `ignore_roles`, `ignore_fields`.
+>
+> **Rationale**: the user wanted to standardize on ms-agent's memory scheme to avoid carrying our own retrieval stack. Inheriting from their classes (rather than reimplementing) gets the full mem0 implementation including features we never had — message-block diff/rollback, LLM fact extraction, pluggable vector stores — while still letting us layer on DefenseAgent-specific helpers (`search_records`, `memory_type` filtering on `get_all`).
+>
+> The previous "Amendment (2026-04-24): SQLite persistence" block is also superseded — SQLite is gone, replaced by mem0's pluggable vector store.
+
+> **Amendment (2026-04-24): SQLite persistence.** *(now historical)*
 > The original spec deferred persistence until pause/resume needed it; that time arrived when we adopted per-agent bundles. `MemoryStream` now accepts an optional `db_path` — when supplied, every `add()` writes a row to `<db_path>` (SQLite, WAL, per-record commit) and every `__init__` rehydrates existing rows. `Memory.from_profile(profile)` is the new front door: it resolves `<profile.source_dir>/memory/stream.db` automatically so each agent gets its own database beside its profile. Embeddings are serialized via `numpy.float32.tobytes()` / `numpy.frombuffer()`; BM25 is still RAM-only and rebuilt from a table scan on open. The helper `scripts/dump_memory.py` prints a stream in chronological order without embeddings for debugging. The "No persistence" line in the original spec is superseded.
 
 ## Purpose

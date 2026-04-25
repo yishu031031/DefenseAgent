@@ -1,7 +1,9 @@
-"""Shared stubs for the agent test suite: a scripted LLM and a zero-vector embedding adapter."""
+"""Shared stubs for the agent test suite: a scripted LLM, a fake DefaultMemory, profile factories."""
+from typing import Any
+from unittest.mock import AsyncMock, MagicMock
+
 from DefenseAgent.config import AgentProfile
-from DefenseAgent.llm.types import LLMResponse, TokenUsage, ToolCall
-from DefenseAgent.memory.embedding import EmbeddingAdapter
+from DefenseAgent.llm.types import LLMResponse, Message, TokenUsage, ToolCall
 
 
 class ScriptedLLM:
@@ -38,18 +40,6 @@ class ScriptedLLM:
         return self._responses.pop(0)
 
 
-class ZeroEmbedder(EmbeddingAdapter):
-    """Embedding stub that returns a constant [0.0] vector for every text; used so Memory works offline."""
-
-    async def embed(self, text: str) -> list[float]:
-        """Return a single-dim zero vector for any `text`."""
-        return [0.0]
-
-    async def embed_batch(self, texts: list[str]) -> list[list[float]]:
-        """Return one zero vector per input text in order."""
-        return [[0.0] for _ in texts]
-
-
 def make_profile(max_steps: int = 10) -> AgentProfile:
     """Build a minimal AgentProfile suitable for agent-loop tests."""
     return AgentProfile(
@@ -73,3 +63,40 @@ def resp(content: str = "", tool_calls: list[ToolCall] | None = None) -> LLMResp
         stop_reason="tool_use" if calls else "end_turn",
         raw={},
     )
+
+
+def fake_memory(profile: AgentProfile | None = None) -> Any:
+    """Build a MagicMock standing in for DefaultMemory: profile + AsyncMock add() + sync search_records/get_all returning []."""
+    profile = profile or make_profile()
+    mem = MagicMock(name="DefaultMemory")
+    mem.profile = profile
+    mem.add = AsyncMock(return_value=None)
+    mem.search_records = MagicMock(return_value=[])
+    mem.get_all = MagicMock(return_value=[])
+    mem.run = AsyncMock(side_effect=lambda msgs, **kw: msgs)
+    return mem
+
+
+def fake_memory_with_records(
+    profile: AgentProfile | None = None,
+    *,
+    search_results: list[dict[str, Any]] | None = None,
+) -> Any:
+    """Same as `fake_memory` but search_records returns the given list, useful for memory_recall tool tests."""
+    mem = fake_memory(profile)
+    mem.search_records = MagicMock(return_value=list(search_results or []))
+    return mem
+
+
+def added_calls(memory: Any) -> list[dict[str, Any]]:
+    """Flatten memory.add.await_args_list into [{messages, memory_type}, ...] for assertions."""
+    out: list[dict[str, Any]] = []
+    for call in memory.add.await_args_list:
+        args = call.args
+        kwargs = call.kwargs
+        messages = args[0] if args else kwargs.get("messages", [])
+        out.append({
+            "messages": list(messages),
+            "memory_type": kwargs.get("memory_type"),
+        })
+    return out

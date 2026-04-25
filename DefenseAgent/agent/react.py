@@ -1,18 +1,19 @@
 import json
 from typing import Any
 
-from DefenseAgent.agent.agent import (
-    Agent,
+from DefenseAgent.agent.base import (
     AgentResult,
     AgentStep,
     AgentStepLimitError,
+    BaseAgent,
+    FAILURE_MEMORY_TYPE,
     add_usage,
     truncate,
 )
 from DefenseAgent.config.profile import AgentProfile
 from DefenseAgent.llm.llm import LLM
 from DefenseAgent.llm.types import Message, TokenUsage, ToolCall
-from DefenseAgent.memory import Memory
+from DefenseAgent.memory import ContextCompressor, DefaultMemory
 from DefenseAgent.ops import AgentLogger
 from DefenseAgent.reflection import Reflector
 from DefenseAgent.tools import ToolRegistry
@@ -26,29 +27,29 @@ _REACT_INSTRUCTIONS = (
     "have enough information to answer."
 )
 
-_FAILURE_OUTCOME_IMPORTANCE = 6.0
+_TRAJECTORY_MEMORY_TYPE = "trajectory"
 
 
-class ReActAgent(Agent):
-    """Yao et al. 2022 — interleaved reasoning + acting. Memory is live-queryable via a tool; each step persists one consolidated trajectory record; reflection and outcome marking fire on both success and failure paths."""
+class ReActAgent(BaseAgent):
+    """Yao et al. 2022 — interleaved reasoning + acting. Memory is mem0-backed; trajectories and outcomes get tagged via memory_type for later filtering."""
 
     def __init__(
         self,
         profile: AgentProfile,
         *,
         llm: LLM,
-        memory: Memory,
+        memory: DefaultMemory,
         tools: ToolRegistry,
         reflector: Reflector | None = None,
         logger: AgentLogger | None = None,
+        compactor: ContextCompressor | None = None,
         memory_recall_top_k: int = 5,
         persist_outcome: bool = True,
         persist_trajectory: bool = True,
         reflect_after_run: bool = True,
         extra_instructions: str | None = None,
-        trajectory_importance: float = 5.0,
     ) -> None:
-        """Wire the base modules plus ReAct knobs; default `trajectory_importance=5.0` so past attempts rank alongside organic observations."""
+        """Wire the base modules plus ReAct knobs; trajectory/outcome/failure are distinguished by mem0's memory_type tag."""
         super().__init__(
             profile,
             llm=llm,
@@ -56,13 +57,13 @@ class ReActAgent(Agent):
             tools=tools,
             reflector=reflector,
             logger=logger,
+            compactor=compactor,
         )
         self.memory_recall_top_k = memory_recall_top_k
         self.persist_outcome = persist_outcome
         self.persist_trajectory = persist_trajectory
         self.reflect_after_run = reflect_after_run
         self.extra_instructions = extra_instructions
-        self.trajectory_importance = trajectory_importance
 
     async def run(
         self,
@@ -70,11 +71,11 @@ class ReActAgent(Agent):
         *,
         max_steps: int | None = None,
     ) -> AgentResult:
-        """LLM-call loop: dispatch tool calls (user tools + built-in memory_recall) until a plain-text answer or max_steps. Success persists the answer; failure persists a `FAILED:` marker; both paths reflect in finally."""
+        """LLM-call loop: dispatch tool calls (user tools + built-in memory_recall) until a plain-text answer or max_steps. Both success and failure paths persist + reflect."""
         cap = self._resolve_max_steps(max_steps)
         self._log("info", "agent.run.start", "starting ReAct run", task=task, max_steps=cap)
 
-        system_prompt = await self._build_system_prompt(task)
+        system_prompt = self._build_system_prompt()
         messages: list[Message] = [Message(role="user", content=task)]
         steps: list[AgentStep] = []
         total = TokenUsage(0, 0, 0)
@@ -82,6 +83,7 @@ class ReActAgent(Agent):
 
         try:
             for i in range(cap):
+                messages = await self._condense_memory(messages)
                 response = await self.llm.chat(
                     messages, system=system_prompt, tools=tool_specs,
                 )
@@ -135,7 +137,7 @@ class ReActAgent(Agent):
                 await self._persist_outcome(
                     task,
                     f"FAILED: exceeded max_steps={cap}",
-                    importance=_FAILURE_OUTCOME_IMPORTANCE,
+                    memory_type=FAILURE_MEMORY_TYPE,
                 )
             raise
         finally:
@@ -151,7 +153,7 @@ class ReActAgent(Agent):
         messages: list[Message],
         steps: list[AgentStep],
     ) -> None:
-        """Append the assistant message, dispatch the tool calls, append results, record both steps, and persist one consolidated trajectory entry for the step."""
+        """Append the assistant message, dispatch the tool calls, append results, record both steps, and persist a consolidated trajectory entry for the step."""
         tool_calls = list(response.tool_calls)
         messages.append(
             Message(
@@ -203,34 +205,28 @@ class ReActAgent(Agent):
         tool_calls: list[ToolCall],
         tool_results: list[Message],
     ) -> None:
-        """Write ONE observation per step summarizing every (call → result) pair — minimizes embedding calls and gives each entry step-level coherence."""
+        """Write ONE memory per step summarizing every (call → result) pair, tagged memory_type='trajectory' so the LLM can recall past attempts."""
         pair_parts: list[str] = []
         for tc, tr in zip(tool_calls, tool_results):
             args_preview = _preview_json(tc.arguments)
             result_preview = truncate(tr.content or "", 100)
             pair_parts.append(f"{tc.name}({args_preview}) → {result_preview}")
         calls_summary = "; ".join(pair_parts)
-
-        content = f"Trajectory step {step_index}: {calls_summary}"
-        await self.memory.remember(
-            content,
-            kind="observation",
-            importance=self.trajectory_importance,
-            metadata={
-                "trajectory": True,
-                "task": truncate(task, 120),
-                "tool_names": [tc.name for tc in tool_calls],
-                "step": step_index,
-            },
+        content = (
+            f"Trajectory step {step_index} for task {truncate(task, 80)!r}: "
+            f"{calls_summary}"
         )
+        try:
+            await self.memory.add(
+                [Message(role="user", content=content)],
+                memory_type=_TRAJECTORY_MEMORY_TYPE,
+            )
+        except Exception as e:
+            self._log("warn", "agent.persist_trajectory_failed", str(e))
 
-    async def _build_system_prompt(self, task: str) -> str:
-        """Identity + upfront memory prime + ReAct instructions (+ optional user extras), joined with blank lines."""
-        memories = await self._recall_memories(task, self.memory_recall_top_k)
+    def _build_system_prompt(self) -> str:
+        """Static system prompt: identity + ReAct instructions (+ optional user extras). Memory injection is now handled by `_condense_memory` on every loop turn."""
         parts: list[str] = [self._identity_prompt()]
-        memory_block = self._memory_block(memories)
-        if memory_block:
-            parts.append(memory_block)
         parts.append(_REACT_INSTRUCTIONS)
         if self.extra_instructions:
             parts.append(self.extra_instructions)

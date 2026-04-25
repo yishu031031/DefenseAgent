@@ -3,7 +3,7 @@ from typing import Any
 
 from openai import AsyncOpenAI
 
-from DefenseAgent.llm.base import LLMAdapter
+from DefenseAgent.llm.base import LLMAdapter, to_dict_safe
 from DefenseAgent.llm.errors import LLMAdapterError, LLMProviderError
 from DefenseAgent.llm.types import (
     LLMResponse,
@@ -38,11 +38,6 @@ class OpenAICompatibleAdapter(LLMAdapter):
         self._client = client or AsyncOpenAI(
             api_key=api_key or None, base_url=base_url or None,
         )
-
-    @property
-    def _model(self) -> str:
-        """Alias retained for backwards compatibility with callers reading adapter._model."""
-        return self.model
 
     async def chat(
         self,
@@ -232,16 +227,5 @@ def _parse_response(response: Any) -> LLMResponse:
             total_tokens=total,
         ),
         stop_reason=stop_reason,
-        raw=_to_dict_safe(response),
+        raw=to_dict_safe(response),
     )
-
-
-def _to_dict_safe(obj: Any) -> dict:
-    """Best-effort dict conversion for the opaque SDK response object stored on .raw."""
-    for attr in ("model_dump", "to_dict"):
-        if hasattr(obj, attr):
-            try:
-                return getattr(obj, attr)()
-            except Exception:
-                pass
-    return {"repr": repr(obj)}

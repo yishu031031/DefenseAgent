@@ -7,6 +7,7 @@ from DefenseAgent.config.profile import (
     ConfigValidationError,
     MCPServerConfig,
     MemoryConfig,
+    PromptConfig,
     ToolsConfig,
 )
 
@@ -16,6 +17,7 @@ __all__ = [
     "MemoryConfig",
     "ToolsConfig",
     "MCPServerConfig",
+    "PromptConfig",
     "ConfigError",
     "ConfigFileNotFoundError",
     "ConfigParseError",

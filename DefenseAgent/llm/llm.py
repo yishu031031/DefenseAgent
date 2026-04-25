@@ -128,12 +128,8 @@ def _resolve_fields(provider: str) -> tuple[str, str, str]:
 
 
 def _pick_override(override: str | None, fallback: str | None) -> str:
-    """Return `override` when non-empty, else `fallback` when set, else an empty string."""
-    if override:
-        return override
-    if fallback:
-        return fallback
-    return ""
+    """Return `override` when non-empty, else `fallback`, else an empty string."""
+    return override or fallback or ""
 
 
 def _validate_fields(

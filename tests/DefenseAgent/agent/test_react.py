@@ -3,12 +3,12 @@ import pytest
 
 from DefenseAgent.agent import AgentStepLimitError, ReActAgent
 from DefenseAgent.llm.types import ToolCall
-from DefenseAgent.memory import Memory
+
 from DefenseAgent.tools import ToolRegistry
 
 from tests.DefenseAgent.agent._support import (
     ScriptedLLM,
-    ZeroEmbedder,
+    fake_memory,
     make_profile,
     resp,
 )
@@ -18,7 +18,7 @@ def _bare_agent(llm, *, profile=None, tools=None, memory=None) -> ReActAgent:
     """Build a ReActAgent with recall/persist/reflection disabled — minimal wiring for loop tests."""
     profile = profile or make_profile()
     tools = tools or ToolRegistry()
-    memory = memory or Memory(profile=profile, embedding_adapter=ZeroEmbedder())
+    memory = memory or fake_memory(profile)
     return ReActAgent(
         profile,
         llm=llm,  # type: ignore[arg-type]
@@ -131,7 +131,7 @@ async def test_max_steps_exhausted_raises():
 
 async def test_persist_outcome_writes_observation_to_memory():
     profile = make_profile()
-    memory = Memory(profile=profile, embedding_adapter=ZeroEmbedder())
+    memory = fake_memory(profile)
     llm = ScriptedLLM([resp(content="final answer")])
     agent = ReActAgent(
         profile,
@@ -142,22 +142,77 @@ async def test_persist_outcome_writes_observation_to_memory():
         persist_outcome=True,
         reflect_after_run=False,
     )
-    assert len(memory) == 0
 
     await agent.run("describe cats", max_steps=2)
 
-    assert len(memory) == 1
-    written = memory.stream.get_all()[0]
+    from tests.DefenseAgent.agent._support import added_calls
+    calls = added_calls(memory)
+    outcome = next(c for c in calls if c["memory_type"] == "outcome")
+    written = outcome["messages"][0]
     assert "Q: describe cats" in written.content
     assert "A: final answer" in written.content
-    assert written.kind == "observation"
 
 
-async def test_recall_memories_are_injected_into_system_prompt():
+async def test_condense_memory_chain_runs_memory_then_compactor():
+    """Memory tools are pipelined in registration order; each one's output feeds the next."""
+    from unittest.mock import AsyncMock, MagicMock
+
     profile = make_profile()
-    memory = Memory(profile=profile, embedding_adapter=ZeroEmbedder())
-    # Pre-seed a fact so recall() has something to return.
-    await memory.remember("Maya is a CS student.", kind="fact", importance=7.0)
+    memory = fake_memory(profile)
+
+    fake_compactor = MagicMock(name="ContextCompressor")
+    fake_compactor.run = AsyncMock(side_effect=lambda msgs, **kw: msgs)
+
+    llm = ScriptedLLM([resp(content="ok")])
+    agent = ReActAgent(
+        profile,
+        llm=llm,  # type: ignore[arg-type]
+        memory=memory,
+        tools=ToolRegistry(),
+        compactor=fake_compactor,
+        memory_recall_top_k=0,
+        persist_outcome=False,
+        persist_trajectory=False,
+        reflect_after_run=False,
+    )
+    assert agent.memory_tools == [memory, fake_compactor]
+
+    await agent.run("anything", max_steps=2)
+
+    # Both tools were invoked at least once before the LLM call.
+    assert memory.run.await_count >= 1
+    assert fake_compactor.run.await_count >= 1
+
+
+async def test_condense_memory_swallows_tool_errors_and_continues():
+    """A misbehaving memory tool must not crash the agent loop — the chain logs and skips it."""
+    from unittest.mock import AsyncMock
+
+    profile = make_profile()
+    memory = fake_memory(profile)
+    memory.run = AsyncMock(side_effect=RuntimeError("memory blew up"))
+
+    llm = ScriptedLLM([resp(content="answer")])
+    agent = ReActAgent(
+        profile,
+        llm=llm,  # type: ignore[arg-type]
+        memory=memory,
+        tools=ToolRegistry(),
+        memory_recall_top_k=0,
+        persist_outcome=False,
+        persist_trajectory=False,
+        reflect_after_run=False,
+    )
+    result = await agent.run("anything", max_steps=2)
+
+    # Run still completed despite the broken memory tool.
+    assert result.final_answer == "answer"
+
+
+async def test_memory_run_is_invoked_on_every_loop_turn():
+    """The condense_memory chain calls memory.run(messages) before each LLM call — that's where injection happens now."""
+    profile = make_profile()
+    memory = fake_memory(profile)
 
     llm = ScriptedLLM([resp(content="ok")])
     agent = ReActAgent(
@@ -171,9 +226,12 @@ async def test_recall_memories_are_injected_into_system_prompt():
     )
     await agent.run("anything", max_steps=2)
 
+    # The chain must have asked memory.run() at least once before the LLM call.
+    assert memory.run.await_count >= 1
+    # Identity/instructions are still in the static system prompt.
     system_prompt = llm.calls[0]["system"]
-    assert "Maya is a CS student." in system_prompt
-    assert "Relevant memories:" in system_prompt
+    assert "You are Tester" in system_prompt
+    assert "memory_recall" in system_prompt.lower()
 
 
 # ---------- system-prompt shape ----------

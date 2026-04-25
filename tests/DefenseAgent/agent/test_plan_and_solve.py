@@ -4,12 +4,12 @@ import pytest
 from DefenseAgent.agent import AgentError, PlanAndSolveAgent
 from DefenseAgent.agent.plan_and_solve import _parse_plan
 from DefenseAgent.llm.types import ToolCall
-from DefenseAgent.memory import Memory
+
 from DefenseAgent.tools import ToolRegistry
 
 from tests.DefenseAgent.agent._support import (
     ScriptedLLM,
-    ZeroEmbedder,
+    fake_memory,
     make_profile,
     resp,
 )
@@ -19,7 +19,7 @@ def _bare_agent(llm, *, tools=None, max_substeps_per_step=3) -> PlanAndSolveAgen
     """Build a PlanAndSolveAgent with recall/persist/reflection disabled for tight tests."""
     profile = make_profile()
     tools = tools or ToolRegistry()
-    memory = Memory(profile=profile, embedding_adapter=ZeroEmbedder())
+    memory = fake_memory(profile)
     return PlanAndSolveAgent(
         profile,
         llm=llm,  # type: ignore[arg-type]
@@ -122,7 +122,7 @@ async def test_empty_plan_raises_agent_error():
 async def test_bad_plan_persists_failure_outcome():
     """Empty-plan failure records a FAILED outcome at importance 6.0 so reflection can see the failure."""
     profile = make_profile()
-    memory = Memory(profile=profile, embedding_adapter=ZeroEmbedder())
+    memory = fake_memory(profile)
     llm = ScriptedLLM([resp(content="not a plan")])
     agent = PlanAndSolveAgent(
         profile,
@@ -137,18 +137,18 @@ async def test_bad_plan_persists_failure_outcome():
     with pytest.raises(AgentError):
         await agent.run("unparseable")
 
-    outcomes = [r for r in memory.stream.get_all() if not r.metadata.get("trajectory")]
-    assert len(outcomes) == 1
-    failure = outcomes[0]
-    assert failure.content.startswith("Q: unparseable")
-    assert "FAILED" in failure.content
-    assert failure.importance == 6.0
+    from tests.DefenseAgent.agent._support import added_calls
+    failures = [c for c in added_calls(memory) if c["memory_type"] == "failure"]
+    assert len(failures) == 1
+    failure_msg = failures[0]["messages"][0]
+    assert "Q: unparseable" in failure_msg.content
+    assert "FAILED" in failure_msg.content
 
 
 async def test_bad_plan_failure_skipped_when_persist_outcome_false():
     """persist_outcome=False disables the failure outcome write just like the success outcome."""
     profile = make_profile()
-    memory = Memory(profile=profile, embedding_adapter=ZeroEmbedder())
+    memory = fake_memory(profile)
     llm = ScriptedLLM([resp(content="garbage")])
     agent = PlanAndSolveAgent(
         profile,
@@ -227,7 +227,7 @@ async def test_plan_system_prompt_contains_identity_but_not_exec_instructions():
 
 async def test_persist_outcome_stores_final_answer():
     profile = make_profile()
-    memory = Memory(profile=profile, embedding_adapter=ZeroEmbedder())
+    memory = fake_memory(profile)
     llm = ScriptedLLM(
         [
             resp(content="1. do it"),
@@ -247,7 +247,9 @@ async def test_persist_outcome_stores_final_answer():
     )
     await agent.run("task A")
 
-    assert len(memory) == 1
-    rec = memory.stream.get_all()[0]
-    assert "Q: task A" in rec.content
-    assert "A: final" in rec.content
+    from tests.DefenseAgent.agent._support import added_calls
+    outcomes = [c for c in added_calls(memory) if c["memory_type"] == "outcome"]
+    assert len(outcomes) == 1
+    msg = outcomes[0]["messages"][0]
+    assert "Q: task A" in msg.content
+    assert "A: final" in msg.content

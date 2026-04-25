@@ -5,5 +5,16 @@ pydantic>=2.0
 pyyaml>=6.0
 numpy>=1.26
 mcp>=1.0.0
+
+# Module 4 (Memory) — ms-agent inheritance over a mem0 backend.
+# `ms-agent` pulls in the full transitive tree (modelscope, qdrant-client,
+# faiss-cpu, sentence-transformers, etc.). The vendored copy at ./ms_agent/
+# shadows the pip-installed package at import time, but `pip install ms-agent`
+# is still required to resolve those transitive deps.
+ms-agent>=1.6.0
+mem0ai>=2.0.0
+omegaconf>=2.3.0
+loguru>=0.7.0
+
 pytest>=8.0.0
 pytest-asyncio>=0.23.0

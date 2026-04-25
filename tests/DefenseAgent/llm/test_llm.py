@@ -338,7 +338,7 @@ def test_from_env_openai(monkeypatch):
          OPENAI_API_KEY="sk-oai", OPENAI_MODEL="gpt-4o-mini")
     llm = LLM.from_env()
     assert isinstance(llm.adapter, OpenAICompatibleAdapter)
-    assert llm.adapter._model == "gpt-4o-mini"
+    assert llm.adapter.model == "gpt-4o-mini"
 
 
 def test_from_env_anthropic(monkeypatch):
@@ -347,7 +347,7 @@ def test_from_env_anthropic(monkeypatch):
          ANTHROPIC_API_KEY="sk-ant", ANTHROPIC_MODEL="claude-sonnet-4-6")
     llm = LLM.from_env()
     assert isinstance(llm.adapter, AnthropicAdapter)
-    assert llm.adapter._model == "claude-sonnet-4-6"
+    assert llm.adapter.model == "claude-sonnet-4-6"
 
 
 def test_from_env_google(monkeypatch):
@@ -408,7 +408,7 @@ def test_llm_model_override_wins(monkeypatch):
          AGENT_LAB_LLM_PROVIDER="openai",
          OPENAI_API_KEY="k", OPENAI_MODEL="gpt-4o-mini",
          LLM_MODEL_ID="gpt-4o")
-    assert LLM.from_env().adapter._model == "gpt-4o"
+    assert LLM.from_env().adapter.model == "gpt-4o"
 
 
 def test_empty_override_is_ignored(monkeypatch):
@@ -418,7 +418,7 @@ def test_empty_override_is_ignored(monkeypatch):
          LLM_API_KEY="", LLM_MODEL_ID="")
     llm = LLM.from_env()
     assert llm.adapter._client.api_key == "provider-key"
-    assert llm.adapter._model == "provider-model"
+    assert llm.adapter.model == "provider-model"
 
 
 def test_per_field_override_is_independent(monkeypatch):
@@ -428,7 +428,7 @@ def test_per_field_override_is_independent(monkeypatch):
          LLM_MODEL_ID="override-model")
     llm = LLM.from_env()
     assert llm.adapter._client.api_key == "provider-key"
-    assert llm.adapter._model == "override-model"
+    assert llm.adapter.model == "override-model"
 
 
 # ---- error branches ----

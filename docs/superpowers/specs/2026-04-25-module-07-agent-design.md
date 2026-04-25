@@ -4,7 +4,19 @@
 **Status:** Draft
 **Module position:** 7 of N. The top-level composition layer — every earlier module feeds in; nothing imports from this one.
 
-> **Amendment (2026-04-25): Memory-as-tool, trajectory persistence, reflection on every exit path, failure outcomes.**
+> **Amendment (2026-04-25 #2): Memory contract migrated to ms-agent + mem0.**
+> Module 4's `MemoryRecord` / `MemoryKind` / `ScoredMemory` / `memory.recall()` / `memory.remember()` are gone (see Module 4's amendment for the full picture). Agent-side knock-on changes:
+>
+> - `Agent.from_profile` now constructs `DefaultMemory.from_profile(profile)` instead of the old `Memory.from_env` / `Memory.from_profile`. The `persist_memory` kwarg is gone; mem0 always persists.
+> - `Agent._recall_memories(query, top_k)` returns `list[dict]` (mem0 records) instead of `list[ScoredMemory]`. `_memory_block` formats `[memory_type] content` from the dict, not `[kind] content` from a typed dataclass.
+> - `Agent._persist_outcome(task, answer, *, memory_type="outcome")` replaces the old `importance=` kwarg. Failures pass `memory_type="failure"` instead of `importance=6.0`.
+> - `_handle_memory_recall` (the agent-owned tool) calls `memory.search_records(query, limit, memory_type)` — DefenseAgent's added wrapper that returns dict records with the `memory_type` filter applied. ms-agent's inherited `search()` returns `list[str]` and is reserved for ms-agent's own `run()` path.
+> - `ReActAgent._persist_trajectory` writes one consolidated entry per step tagged `memory_type="trajectory"`; the old `importance` / `metadata={"trajectory": True}` shape is replaced by mem0's free-form metadata + the memory_type tag.
+> - `Agent.close()` no longer calls `memory.close()` (mem0 manages its own resources).
+>
+> The four prior fixes (memory-as-tool, per-step trajectory consolidation, reflection in `finally`, failure outcomes) all still apply — the underlying memory system changed but the Agent's *behavioral contracts* didn't. See the next block for the original 2026-04-25 amendment.
+
+> **Amendment (2026-04-25 #1): Memory-as-tool, trajectory persistence, reflection on every exit path, failure outcomes.**
 > The original spec had three structural gaps that post-review made load-bearing:
 > 1. **Memory recall was a one-shot upfront prime**, frozen at step 0. Fixed by exposing `memory_recall` as an Agent-owned tool. The LLM now sees it in `registry.spec()` every turn and can query memory mid-loop with any refined query. The upfront prime stays (primes the context); the tool gives step-5 the option to search for something the step-0 query would never have retrieved.
 > 2. **Only the final answer was persisted**, so past reasoning trajectories were lost. ReAct now writes **one consolidated observation per step** (not per tool call) summarizing all `(call → result)` pairs at `importance=5.0` with `metadata={"trajectory": True, "task": ..., "tool_names": [...], "step": ...}`. Per-step (not per-call) means one embedding+write per turn regardless of how many tools the model invoked concurrently.

@@ -3,13 +3,13 @@ import pytest
 
 from DefenseAgent.agent import AgentStepLimitError, ReActAgent
 from DefenseAgent.llm.types import ToolCall
-from DefenseAgent.memory import Memory
+
 from DefenseAgent.reflection import Reflector
 from DefenseAgent.tools import ToolRegistry
 
 from tests.DefenseAgent.agent._support import (
     ScriptedLLM,
-    ZeroEmbedder,
+    fake_memory,
     make_profile,
     resp,
 )
@@ -37,7 +37,7 @@ class _FakeReflector:
 async def test_trajectory_writes_one_observation_per_step():
     """Each agent step with tool calls produces exactly ONE trajectory record (not one per call)."""
     profile = make_profile()
-    memory = Memory(profile=profile, embedding_adapter=ZeroEmbedder())
+    memory = fake_memory(profile)
     registry = ToolRegistry()
 
     @registry.tool
@@ -69,26 +69,27 @@ async def test_trajectory_writes_one_observation_per_step():
         reflect_after_run=False,
     )
 
-    assert len(memory) == 0
     await agent.run("task", max_steps=5)
-    # 2 trajectory steps + 1 outcome = 3 records.
-    assert len(memory) == 3
 
-    records = memory.stream.get_all()
-    trajectory_records = [r for r in records if r.metadata.get("trajectory")]
-    assert len(trajectory_records) == 2
-    assert trajectory_records[0].metadata["tool_names"] == ["square"]
-    assert trajectory_records[0].metadata["step"] == 0
-    assert trajectory_records[1].metadata["step"] == 1
-    # Content carries the call + result preview.
-    assert "square(" in trajectory_records[0].content
-    assert "→" in trajectory_records[0].content
+    from tests.DefenseAgent.agent._support import added_calls
+    calls = added_calls(memory)
+    trajectory_calls = [c for c in calls if c["memory_type"] == "trajectory"]
+    outcome_calls = [c for c in calls if c["memory_type"] == "outcome"]
+    assert len(trajectory_calls) == 2
+    assert len(outcome_calls) == 1
+
+    first_traj = trajectory_calls[0]["messages"][0].content
+    second_traj = trajectory_calls[1]["messages"][0].content
+    assert "Trajectory step 0" in first_traj
+    assert "Trajectory step 1" in second_traj
+    assert "square(" in first_traj
+    assert "→" in first_traj
 
 
 async def test_trajectory_consolidates_multiple_tool_calls_into_one_record():
     """A single LLM turn with N concurrent tool calls must produce ONE trajectory record, not N."""
     profile = make_profile()
-    memory = Memory(profile=profile, embedding_adapter=ZeroEmbedder())
+    memory = fake_memory(profile)
     registry = ToolRegistry()
 
     @registry.tool
@@ -121,60 +122,20 @@ async def test_trajectory_consolidates_multiple_tool_calls_into_one_record():
     )
     await agent.run("task", max_steps=5)
 
-    trajectory_records = [
-        r for r in memory.stream.get_all() if r.metadata.get("trajectory")
+    from tests.DefenseAgent.agent._support import added_calls
+    trajectory_calls = [
+        c for c in added_calls(memory) if c["memory_type"] == "trajectory"
     ]
-    assert len(trajectory_records) == 1
-    record = trajectory_records[0]
-    # Metadata lists every tool name called in that step.
-    assert record.metadata["tool_names"] == ["echo", "echo", "echo"]
+    assert len(trajectory_calls) == 1
+    content = trajectory_calls[0]["messages"][0].content
     # Content summarizes all three calls with `; ` between them.
-    assert record.content.count("echo(") == 3
-    assert record.content.count(";") >= 2
-
-
-async def test_trajectory_importance_defaults_to_five():
-    """New default is 5.0 — equal footing with organic observations so memory_recall surfaces past attempts."""
-    profile = make_profile()
-    memory = Memory(profile=profile, embedding_adapter=ZeroEmbedder())
-    registry = ToolRegistry()
-
-    @registry.tool
-    def noop() -> str:
-        """no-op"""
-        return "ok"
-
-    llm = ScriptedLLM(
-        [
-            resp(
-                content="",
-                tool_calls=[ToolCall(id="c1", name="noop", arguments={})],
-            ),
-            resp(content="done"),
-        ]
-    )
-    agent = ReActAgent(
-        profile,
-        llm=llm,  # type: ignore[arg-type]
-        memory=memory,
-        tools=registry,
-        memory_recall_top_k=0,
-        persist_outcome=True,
-        persist_trajectory=True,
-        reflect_after_run=False,
-    )
-    await agent.run("task", max_steps=5)
-
-    records = memory.stream.get_all()
-    trajectory = next(r for r in records if r.metadata.get("trajectory"))
-    outcome = next(r for r in records if not r.metadata.get("trajectory"))
-    assert trajectory.importance == 5.0
-    assert outcome.importance == 5.0  # success outcomes use the same default
+    assert content.count("echo(") == 3
+    assert content.count(";") >= 2
 
 
 async def test_persist_trajectory_false_writes_no_trajectory_records():
     profile = make_profile()
-    memory = Memory(profile=profile, embedding_adapter=ZeroEmbedder())
+    memory = fake_memory(profile)
     registry = ToolRegistry()
 
     @registry.tool
@@ -203,13 +164,14 @@ async def test_persist_trajectory_false_writes_no_trajectory_records():
     )
     await agent.run("task", max_steps=5)
 
-    records = memory.stream.get_all()
-    assert all(not r.metadata.get("trajectory") for r in records)
+    from tests.DefenseAgent.agent._support import added_calls
+    calls = added_calls(memory)
+    assert all(c["memory_type"] != "trajectory" for c in calls)
 
 
 async def test_trajectory_previews_truncate_long_results():
     profile = make_profile()
-    memory = Memory(profile=profile, embedding_adapter=ZeroEmbedder())
+    memory = fake_memory(profile)
     registry = ToolRegistry()
 
     @registry.tool
@@ -238,10 +200,12 @@ async def test_trajectory_previews_truncate_long_results():
     )
     await agent.run("t", max_steps=3)
 
-    trajectory = next(r for r in memory.stream.get_all() if r.metadata.get("trajectory"))
+    from tests.DefenseAgent.agent._support import added_calls
+    trajectory = next(c for c in added_calls(memory) if c["memory_type"] == "trajectory")
+    content = trajectory["messages"][0].content
     # 500-char result should have been cut down with "..." before being stored.
-    assert "..." in trajectory.content
-    assert len(trajectory.content) < 400
+    assert "..." in content
+    assert len(content) < 400
 
 
 # ---------- reflection on every exit path ----------
@@ -249,7 +213,7 @@ async def test_trajectory_previews_truncate_long_results():
 
 async def test_reflection_fires_on_success():
     profile = make_profile()
-    memory = Memory(profile=profile, embedding_adapter=ZeroEmbedder())
+    memory = fake_memory(profile)
     reflector = _FakeReflector()
     agent = ReActAgent(
         profile,
@@ -269,7 +233,7 @@ async def test_reflection_fires_on_success():
 async def test_reflection_fires_on_max_steps_exhaustion():
     """The whole point of the fix — reflection must run when a run FAILS too."""
     profile = make_profile()
-    memory = Memory(profile=profile, embedding_adapter=ZeroEmbedder())
+    memory = fake_memory(profile)
     registry = ToolRegistry()
 
     @registry.tool
@@ -306,7 +270,7 @@ async def test_reflection_fires_on_max_steps_exhaustion():
 
 async def test_reflection_failure_does_not_mask_success():
     profile = make_profile()
-    memory = Memory(profile=profile, embedding_adapter=ZeroEmbedder())
+    memory = fake_memory(profile)
     reflector = _FakeReflector(raise_on_reflect=True)
     agent = ReActAgent(
         profile,
@@ -327,7 +291,7 @@ async def test_reflection_failure_does_not_mask_success():
 
 async def test_reflection_failure_does_not_mask_step_limit_error():
     profile = make_profile()
-    memory = Memory(profile=profile, embedding_adapter=ZeroEmbedder())
+    memory = fake_memory(profile)
     registry = ToolRegistry()
 
     @registry.tool
@@ -365,7 +329,7 @@ async def test_reflection_failure_does_not_mask_step_limit_error():
 async def test_failure_path_persists_outcome_with_failed_prefix():
     """When max_steps is exhausted the failure is recorded as an outcome at importance 6.0."""
     profile = make_profile()
-    memory = Memory(profile=profile, embedding_adapter=ZeroEmbedder())
+    memory = fake_memory(profile)
     registry = ToolRegistry()
 
     @registry.tool
@@ -395,21 +359,19 @@ async def test_failure_path_persists_outcome_with_failed_prefix():
     with pytest.raises(AgentStepLimitError):
         await agent.run("hard task", max_steps=3)
 
-    outcome_records = [
-        r for r in memory.stream.get_all() if not r.metadata.get("trajectory")
-    ]
-    assert len(outcome_records) == 1
-    failure = outcome_records[0]
-    assert failure.content.startswith("Q: hard task")
-    assert "FAILED" in failure.content
-    assert "max_steps=3" in failure.content
-    assert failure.importance == 6.0
+    from tests.DefenseAgent.agent._support import added_calls
+    failures = [c for c in added_calls(memory) if c["memory_type"] == "failure"]
+    assert len(failures) == 1
+    failure_msg = failures[0]["messages"][0]
+    assert "Q: hard task" in failure_msg.content
+    assert "FAILED" in failure_msg.content
+    assert "max_steps=3" in failure_msg.content
 
 
 async def test_failure_outcome_skipped_when_persist_outcome_false():
     """persist_outcome=False disables outcome writes on both success and failure paths."""
     profile = make_profile()
-    memory = Memory(profile=profile, embedding_adapter=ZeroEmbedder())
+    memory = fake_memory(profile)
     registry = ToolRegistry()
 
     @registry.tool
@@ -443,7 +405,7 @@ async def test_failure_outcome_skipped_when_persist_outcome_false():
 
 async def test_reflect_after_run_false_skips_reflection_on_both_paths():
     profile = make_profile()
-    memory = Memory(profile=profile, embedding_adapter=ZeroEmbedder())
+    memory = fake_memory(profile)
     reflector = _FakeReflector()
     agent = ReActAgent(
         profile,

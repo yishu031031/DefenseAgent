@@ -36,15 +36,22 @@ class CognitiveConfig(BaseModel):
 
 
 class MemoryConfig(BaseModel):
-    """Knobs for the memory subsystem (retrieval weights, top_k, token budget)."""
+    """Memory subsystem configuration matching ms-agent's mem0-backed scheme: storage, search, compaction, ingestion knobs."""
 
     model_config = _STRICT_MODEL_CONFIG
 
-    max_working_memory_tokens: int = Field(ge=1, default=4000)
-    retrieval_top_k: int = Field(ge=1, default=10)
-    recency_weight: float = Field(ge=0, default=1.0)
-    importance_weight: float = Field(ge=0, default=1.0)
-    relevance_weight: float = Field(ge=0, default=1.0)
+    storage_path: str | None = None
+    history_mode: str = Field(default="add", pattern=r"^(add|overwrite)$")
+    is_retrieve: bool = True
+    search_limit: int = Field(ge=1, default=10)
+    ignore_roles: list[str] = Field(default_factory=lambda: ["tool", "system"])
+    ignore_fields: list[str] = Field(default_factory=lambda: ["reasoning_content"])
+
+    context_limit: int = Field(ge=1024, default=128_000)
+    prune_protect: int = Field(ge=0, default=40_000)
+    prune_minimum: int = Field(ge=0, default=20_000)
+    reserved_buffer: int = Field(ge=0, default=20_000)
+    enable_summary: bool = True
 
 
 class MCPServerConfig(BaseModel):
@@ -67,6 +74,16 @@ class ToolsConfig(BaseModel):
     mcp: list[MCPServerConfig] = Field(default_factory=list)
 
 
+class PromptConfig(BaseModel):
+    """User-authored system prompt for the agent. `system` wins over `path`; both are optional and fall back to the auto-built identity block."""
+
+    model_config = _STRICT_MODEL_CONFIG
+
+    system: str | None = None
+    path: str | None = None
+    extra_instructions: str | None = None
+
+
 class AgentProfile(BaseModel):
     """Module 2's unified facade: the validated agent identity plus nested cognitive, memory, and tools configs."""
 
@@ -81,6 +98,7 @@ class AgentProfile(BaseModel):
     cognitive: CognitiveConfig = Field(default_factory=CognitiveConfig)
     memory: MemoryConfig = Field(default_factory=MemoryConfig)
     tools: ToolsConfig = Field(default_factory=ToolsConfig)
+    prompt: PromptConfig = Field(default_factory=PromptConfig)
 
     _source_path: Path | None = PrivateAttr(default=None)
 
