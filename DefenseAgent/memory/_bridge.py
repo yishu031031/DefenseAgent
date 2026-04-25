@@ -20,12 +20,12 @@ def profile_to_dictconfig(
     run_id: str = "default_run",
     storage_path: str | Path | None = None,
 ) -> Any:
-    """Translate our pydantic AgentProfile into the OmegaConf DictConfig that ms-agent's Memory subclasses read; carries the ready-to-use `mem0_config` dict so DefenseAgent.DefaultMemory can bypass ms-agent's hardcoded service-URL translation."""
+    """Translate our pydantic AgentProfile into the OmegaConf DictConfig that ms-agent's Memory subclasses read; carries the ready-to-use `mem0_config` dict so DefenseAgent.DefaultMemory can bypass ms-agent's hardcoded service-URL translation. Two LLM/embedder shapes coexist on the config: a flat one at `config.llm` for ms-agent's ContextCompressor (which reads `config.llm.model` / `config.llm.openai_api_key` etc.), and a nested mem0-shape inside `config.mem0_config` for `mem0.Memory.from_config()`."""
     resolved_path = _resolve_storage_path(profile, storage_path)
     resolved_agent_id = agent_id or profile.id
     storage_dir = str(resolved_path / "default_memory")
-    llm_cfg = _llm_config_from_env()
-    embedder_cfg = _embedder_config_from_env()
+    mem0_llm = _llm_config_from_env()
+    mem0_embedder = _embedder_config_from_env()
     return OmegaConf.create({
         "output_dir": str(resolved_path),
         "compress": True,
@@ -49,9 +49,8 @@ def profile_to_dictconfig(
                 "enable_summary": profile.memory.enable_summary,
             },
         },
-        "llm": llm_cfg,
-        "embedder": embedder_cfg,
-        "mem0_config": _mem0_config(embedder_cfg, llm_cfg, storage_dir),
+        "llm": _flat_llm_config_from_env(),
+        "mem0_config": _mem0_config(mem0_embedder, mem0_llm, storage_dir),
     })
 
 
@@ -159,8 +158,18 @@ def _resolve_storage_path(
     return (profile.source_dir / "memory").resolve()
 
 
-def _llm_config_from_env() -> dict[str, Any]:
-    """Build the mem0 `llm` config dict from AGENT_LAB_LLM_PROVIDER + per-provider .env block. mem0 only natively understands `anthropic` and `openai`; every other provider (deepseek, qwen, vllm, modelscope, openrouter) is routed through mem0's `openai` provider with the matching base_url."""
+def _flat_llm_config_from_env() -> dict[str, Any]:
+    """Build the flat-shape LLM config that ms-agent's ContextCompressor reads. Fields mirror ms-agent's `openai_llm.py`/`anthropic_llm.py` lookups: `service`, `model`, `<service>_api_key`, `<service>_base_url`. Everything OpenAI-compatible is routed through `service='openai'` so the matching base_url and api_key keys are picked up."""
+    provider, api_key, base_url, model = _resolve_provider_block()
+    service = "anthropic" if provider == "anthropic" else "openai"
+    cfg: dict[str, Any] = {"service": service, "model": model, f"{service}_api_key": api_key}
+    if base_url:
+        cfg[f"{service}_base_url"] = base_url
+    return cfg
+
+
+def _resolve_provider_block() -> tuple[str, str, str, str]:
+    """Read AGENT_LAB_LLM_PROVIDER plus its per-provider env block (`<PROVIDER>_API_KEY`, `_BASE_URL`, `_MODEL`); raises if the provider or its required fields are missing."""
     provider = os.environ.get("AGENT_LAB_LLM_PROVIDER", "").strip().lower()
     if not provider:
         raise ValueError(
@@ -174,6 +183,12 @@ def _llm_config_from_env() -> dict[str, Any]:
         raise ValueError(
             f"{block}_API_KEY and {block}_MODEL must be set in .env for mem0"
         )
+    return provider, api_key, base_url, model
+
+
+def _llm_config_from_env() -> dict[str, Any]:
+    """Build the mem0 `llm` config dict from AGENT_LAB_LLM_PROVIDER + per-provider .env block. mem0 only natively understands `anthropic` and `openai`; every other provider (deepseek, qwen, vllm, modelscope, openrouter) is routed through mem0's `openai` provider with the matching base_url."""
+    provider, api_key, base_url, model = _resolve_provider_block()
     if provider == "anthropic":
         return {"provider": "anthropic", "config": {"api_key": api_key, "model": model}}
     cfg: dict[str, Any] = {"api_key": api_key, "model": model}
