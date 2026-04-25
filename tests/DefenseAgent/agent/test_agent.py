@@ -112,7 +112,7 @@ async def _patched_from_profile(cls, profile: AgentProfile):
     from DefenseAgent.memory.default_memory import DefaultMemory
 
     with patch.object(
-        DefaultMemory.__mro__[1],  # ms-agent's DefaultMemory
+        DefaultMemory,
         "_init_memory_obj",
         return_value=MagicMock(name="mem0"),
     ):

@@ -193,7 +193,7 @@ def _tool_schema_to_wire(schema: dict) -> dict:
         "function": {
             "name": schema["name"],
             "description": schema.get("description", ""),
-            "parameters": schema.get("parameters", {}),
+            "parameters": schema.get("input_schema") or {"type": "object", "properties": {}},
         },
     }
 

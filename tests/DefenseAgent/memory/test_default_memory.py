@@ -42,7 +42,7 @@ def _build_memory(profile: AgentProfile) -> Any:
     fake_mem0.get_all.return_value = {"results": []}
 
     with patch.object(
-        DefaultMemory.__mro__[1],  # ms-agent's DefaultMemory
+        DefaultMemory,
         "_init_memory_obj",
         return_value=fake_mem0,
     ):
@@ -192,17 +192,15 @@ async def test_run_search_no_hits_returns_input_unchanged(
     assert result[0].content == "anything"
 
 
-async def test_run_injects_hits_into_system_prompt(
+async def test_run_is_a_passthrough_in_defenseagent(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ):
+    """DefenseAgent.DefaultMemory.run() returns messages unchanged — the LLM accesses memory through the built-in `memory_recall` tool, not via passive system-prompt injection (which would collide with BaseAgent's `system=` kwarg)."""
     _set_env(monkeypatch)
     profile = _make_profile(tmp_path)
     memory = _build_memory(profile)
     memory._fake_mem0.search.return_value = {
-        "results": [
-            {"id": "m1", "memory": "Maya prefers the library."},
-            {"id": "m2", "memory": "Maya is bilingual."},
-        ]
+        "results": [{"id": "m1", "memory": "Maya prefers the library."}]
     }
 
     messages = [
@@ -211,10 +209,8 @@ async def test_run_injects_hits_into_system_prompt(
     ]
     result = await memory.run(messages)
 
-    system = next(m for m in result if m.role == "system")
-    assert "Maya prefers the library." in system.content
-    assert "Maya is bilingual." in system.content
-    assert "You are Maya." in system.content
+    assert result == messages
+    memory._fake_mem0.search.assert_not_called()
 
 
 async def test_add_filters_ignore_roles_then_forwards(
@@ -236,7 +232,7 @@ async def test_add_filters_ignore_roles_then_forwards(
     forwarded = args[0]
     assert isinstance(forwarded, list)
     assert all(m["role"] == "user" for m in forwarded)
-    assert kwargs["memory_type"] == "trajectory"
+    assert kwargs["metadata"] == {"memory_type": "trajectory"}
 
 
 async def test_add_filters_via_inherited_parse_messages(

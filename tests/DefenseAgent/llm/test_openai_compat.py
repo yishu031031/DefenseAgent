@@ -142,7 +142,7 @@ async def test_tools_json_schema_translated_to_openai_function_format(
         {
             "name": "get_weather",
             "description": "Get the current weather for a city.",
-            "parameters": {
+            "input_schema": {
                 "type": "object",
                 "properties": {"city": {"type": "string"}},
                 "required": ["city"],

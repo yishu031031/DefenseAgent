@@ -1,4 +1,5 @@
 import os
+import re
 from pathlib import Path
 from typing import Any
 
@@ -19,9 +20,12 @@ def profile_to_dictconfig(
     run_id: str = "default_run",
     storage_path: str | Path | None = None,
 ) -> Any:
-    """Translate our pydantic AgentProfile into the OmegaConf DictConfig that ms-agent's Memory subclasses read."""
+    """Translate our pydantic AgentProfile into the OmegaConf DictConfig that ms-agent's Memory subclasses read; carries the ready-to-use `mem0_config` dict so DefenseAgent.DefaultMemory can bypass ms-agent's hardcoded service-URL translation."""
     resolved_path = _resolve_storage_path(profile, storage_path)
     resolved_agent_id = agent_id or profile.id
+    storage_dir = str(resolved_path / "default_memory")
+    llm_cfg = _llm_config_from_env()
+    embedder_cfg = _embedder_config_from_env()
     return OmegaConf.create({
         "output_dir": str(resolved_path),
         "compress": True,
@@ -35,7 +39,7 @@ def profile_to_dictconfig(
                 "ignore_roles": list(profile.memory.ignore_roles),
                 "ignore_fields": list(profile.memory.ignore_fields),
                 "search_limit": profile.memory.search_limit,
-                "path": str(resolved_path / "default_memory"),
+                "path": storage_dir,
             },
             "context_compressor": {
                 "context_limit": profile.memory.context_limit,
@@ -45,9 +49,32 @@ def profile_to_dictconfig(
                 "enable_summary": profile.memory.enable_summary,
             },
         },
-        "llm": _llm_config_from_env(),
-        "embedder": _embedder_config_from_env(),
+        "llm": llm_cfg,
+        "embedder": embedder_cfg,
+        "mem0_config": _mem0_config(embedder_cfg, llm_cfg, storage_dir),
     })
+
+
+def _mem0_config(
+    embedder_cfg: dict[str, Any],
+    llm_cfg: dict[str, Any],
+    storage_dir: str,
+) -> dict[str, Any]:
+    """Assemble the dict mem0.Memory.from_config() expects (embedder + llm + qdrant on-disk vector store). The embedder's `embedding_dims` is propagated to the vector store so qdrant collections match the embedder's output dimensionality."""
+    collection = re.sub(r"[^a-zA-Z0-9_]+", "_", storage_dir).strip("_") or "default"
+    vs_config: dict[str, Any] = {
+        "path": storage_dir,
+        "on_disk": True,
+        "collection_name": collection,
+    }
+    embedder_inner = embedder_cfg.get("config", {})
+    if "embedding_dims" in embedder_inner:
+        vs_config["embedding_model_dims"] = embedder_inner["embedding_dims"]
+    return {
+        "embedder": embedder_cfg,
+        "llm": llm_cfg,
+        "vector_store": {"provider": "qdrant", "config": vs_config},
+    }
 
 
 def msg_ours_to_theirs(msg: OurMessage) -> MsMessage:
@@ -133,7 +160,7 @@ def _resolve_storage_path(
 
 
 def _llm_config_from_env() -> dict[str, Any]:
-    """Build the mem0 `llm` config dict from AGENT_LAB_LLM_PROVIDER + per-provider .env block."""
+    """Build the mem0 `llm` config dict from AGENT_LAB_LLM_PROVIDER + per-provider .env block. mem0 only natively understands `anthropic` and `openai`; every other provider (deepseek, qwen, vllm, modelscope, openrouter) is routed through mem0's `openai` provider with the matching base_url."""
     provider = os.environ.get("AGENT_LAB_LLM_PROVIDER", "").strip().lower()
     if not provider:
         raise ValueError(
@@ -147,11 +174,11 @@ def _llm_config_from_env() -> dict[str, Any]:
         raise ValueError(
             f"{block}_API_KEY and {block}_MODEL must be set in .env for mem0"
         )
+    if provider == "anthropic":
+        return {"provider": "anthropic", "config": {"api_key": api_key, "model": model}}
     cfg: dict[str, Any] = {"api_key": api_key, "model": model}
     if base_url:
         cfg["openai_base_url"] = base_url
-    if provider in ("deepseek", "anthropic", "gemini"):
-        return {"provider": provider, "config": {"api_key": api_key, "model": model}}
     return {"provider": "openai", "config": cfg}
 
 

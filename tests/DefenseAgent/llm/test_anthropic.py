@@ -119,7 +119,7 @@ async def test_tools_schema_translated_to_anthropic_format(fake_anthropic_client
         {
             "name": "get_weather",
             "description": "Get weather for a city.",
-            "parameters": {
+            "input_schema": {
                 "type": "object",
                 "properties": {"city": {"type": "string"}},
                 "required": ["city"],

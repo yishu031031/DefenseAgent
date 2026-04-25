@@ -177,7 +177,7 @@ def _tool_schema_to_wire(schema: dict) -> dict:
     return {
         "name": schema["name"],
         "description": schema.get("description", ""),
-        "input_schema": schema.get("parameters", {}),
+        "input_schema": schema.get("input_schema") or {"type": "object", "properties": {}},
     }
 
 

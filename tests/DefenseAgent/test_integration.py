@@ -320,7 +320,7 @@ async def test_full_stack_profile_memory_tools_compose(monkeypatch):
     fake_mem0.add.return_value = None
 
     with patch.object(
-        DefaultMemory.__mro__[1],  # ms-agent's DefaultMemory
+        DefaultMemory,
         "_init_memory_obj",
         return_value=fake_mem0,
     ):
