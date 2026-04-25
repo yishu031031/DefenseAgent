@@ -1,0 +1,272 @@
+import re
+
+from DefenseAgent.agent.agent import (
+    Agent,
+    AgentError,
+    AgentResult,
+    AgentStep,
+    add_usage,
+    truncate,
+)
+from DefenseAgent.config.profile import AgentProfile
+from DefenseAgent.llm.llm import LLM
+from DefenseAgent.llm.types import Message, TokenUsage
+from DefenseAgent.memory import Memory
+from DefenseAgent.ops import AgentLogger
+from DefenseAgent.reflection import Reflector
+from DefenseAgent.tools import ToolRegistry
+
+
+_PLAN_PROMPT_TEMPLATE = """\
+Task: {task}
+
+Break the task into 2–5 concrete, ordered steps that together will solve it.
+Return one step per line, prefixed with "1. ", "2. ", etc. No preamble, no
+explanation, and no extra blank lines."""
+
+
+_EXEC_INSTRUCTIONS = (
+    "You are executing ONE step of a larger plan. You may call tools via the "
+    "function-calling interface. When you have a concise result for this step, "
+    "reply in plain text and stop calling tools."
+)
+
+
+_SYNTHESIS_PROMPT_TEMPLATE = """\
+Original task: {task}
+
+You executed the following plan:
+
+{plan_with_results}
+
+Write the final answer to the original task in 2–4 sentences. Do not restate
+the plan; just give the user-facing answer."""
+
+
+_STEP_LINE_RE = re.compile(r"^\s*\d+[\.)]\s*(.+?)\s*$")
+
+_FAILURE_OUTCOME_IMPORTANCE = 6.0
+
+
+class PlanAndSolveAgent(Agent):
+    """Wang et al. 2023 — plan the task into discrete steps, execute each with tools, then synthesize the final answer."""
+
+    def __init__(
+        self,
+        profile: AgentProfile,
+        *,
+        llm: LLM,
+        memory: Memory,
+        tools: ToolRegistry,
+        reflector: Reflector | None = None,
+        logger: AgentLogger | None = None,
+        memory_recall_top_k: int = 5,
+        max_substeps_per_step: int = 3,
+        persist_outcome: bool = True,
+        reflect_after_run: bool = True,
+    ) -> None:
+        """Wire the base modules and Plan-and-Solve knobs (recall size, per-step tool-call budget)."""
+        super().__init__(
+            profile,
+            llm=llm,
+            memory=memory,
+            tools=tools,
+            reflector=reflector,
+            logger=logger,
+        )
+        self.memory_recall_top_k = memory_recall_top_k
+        self.max_substeps_per_step = max_substeps_per_step
+        self.persist_outcome = persist_outcome
+        self.reflect_after_run = reflect_after_run
+
+    async def run(
+        self,
+        task: str,
+        *,
+        max_steps: int | None = None,
+    ) -> AgentResult:
+        """Three phases: (1) plan, (2) execute each step with a short tool loop, (3) synthesize. Reflection fires on every exit path via finally."""
+        cap = self._resolve_max_steps(max_steps)
+        self._log(
+            "info", "agent.run.start", "starting Plan-and-Solve run",
+            task=task, max_steps=cap,
+        )
+
+        try:
+            memories = await self._recall_memories(task, self.memory_recall_top_k)
+            memory_block = self._memory_block(memories)
+            identity = self._identity_prompt()
+
+            steps: list[AgentStep] = []
+            total = TokenUsage(0, 0, 0)
+
+            # Phase 1 — plan.
+            plan_system = _join_blocks(identity, memory_block)
+            plan_response = await self.llm.chat(
+                [Message(role="user", content=_PLAN_PROMPT_TEMPLATE.format(task=task))],
+                system=plan_system,
+            )
+            total = add_usage(total, plan_response.usage)
+            plan = _parse_plan(plan_response.content)
+            if not plan:
+                raise AgentError(
+                    f"planning response did not produce any steps:\n{plan_response.content!r}"
+                )
+            if len(plan) > cap:
+                plan = plan[:cap]
+            steps.append(
+                AgentStep(
+                    index=0, kind="plan",
+                    content="\n".join(plan), usage=plan_response.usage,
+                )
+            )
+            self._log("info", "agent.plan", "plan produced", step_count=len(plan))
+
+            # Phase 2 — execute each step.
+            exec_system = _join_blocks(identity, memory_block, _EXEC_INSTRUCTIONS)
+            tool_specs = self._combined_tool_specs()
+            step_outputs: list[str] = []
+            for plan_index, plan_step in enumerate(plan):
+                step_answer, step_usage = await self._execute_plan_step(
+                    plan_step=plan_step,
+                    original_task=task,
+                    exec_system=exec_system,
+                    tool_specs=tool_specs,
+                    step_index=plan_index + 1,
+                    all_steps=steps,
+                )
+                total = add_usage(total, step_usage)
+                step_outputs.append(step_answer)
+
+            # Phase 3 — synthesize.
+            plan_with_results = "\n".join(
+                f"{i + 1}. {plan[i]}\n   → {step_outputs[i]}"
+                for i in range(len(plan))
+            )
+            synthesis_response = await self.llm.chat(
+                [
+                    Message(
+                        role="user",
+                        content=_SYNTHESIS_PROMPT_TEMPLATE.format(
+                            task=task, plan_with_results=plan_with_results,
+                        ),
+                    )
+                ],
+                system=plan_system,
+            )
+            total = add_usage(total, synthesis_response.usage)
+            steps.append(
+                AgentStep(
+                    index=len(steps),
+                    kind="answer",
+                    content=synthesis_response.content,
+                    usage=synthesis_response.usage,
+                )
+            )
+            self._log(
+                "info", "agent.answer", "Plan-and-Solve synthesized final answer",
+                total_tokens=total.total_tokens,
+            )
+
+            if self.persist_outcome:
+                await self._persist_outcome(task, synthesis_response.content)
+
+            return AgentResult(
+                task=task,
+                final_answer=synthesis_response.content,
+                steps=steps,
+                usage=total,
+            )
+        except AgentError as e:
+            if self.persist_outcome:
+                await self._persist_outcome(
+                    task,
+                    f"FAILED: {truncate(str(e), 200)}",
+                    importance=_FAILURE_OUTCOME_IMPORTANCE,
+                )
+            raise
+        finally:
+            if self.reflect_after_run:
+                await self._run_reflection_safely()
+
+    async def _execute_plan_step(
+        self,
+        *,
+        plan_step: str,
+        original_task: str,
+        exec_system: str,
+        tool_specs: list[dict] | None,
+        step_index: int,
+        all_steps: list[AgentStep],
+    ) -> tuple[str, TokenUsage]:
+        """Run a short ReAct-style sub-loop for ONE planned step; returns (step_answer, sub-loop usage)."""
+        messages: list[Message] = [
+            Message(
+                role="user",
+                content=(
+                    f"Original task: {original_task}\n"
+                    f"Execute ONLY this step: {plan_step}"
+                ),
+            )
+        ]
+        sub_total = TokenUsage(0, 0, 0)
+
+        for _ in range(self.max_substeps_per_step):
+            response = await self.llm.chat(
+                messages, system=exec_system, tools=tool_specs,
+            )
+            sub_total = add_usage(sub_total, response.usage)
+
+            if response.tool_calls:
+                messages.append(
+                    Message(
+                        role="assistant",
+                        content=response.content or "",
+                        tool_calls=list(response.tool_calls),
+                    )
+                )
+                all_steps.append(
+                    AgentStep(
+                        index=len(all_steps),
+                        kind="tool_call",
+                        content=response.content or "",
+                        tool_calls=list(response.tool_calls),
+                        usage=response.usage,
+                    )
+                )
+                tool_results = await self._dispatch_tool_calls(response.tool_calls)
+                messages.extend(tool_results)
+                all_steps.append(
+                    AgentStep(
+                        index=len(all_steps),
+                        kind="tool_result",
+                        tool_results=list(tool_results),
+                    )
+                )
+                continue
+
+            return response.content, sub_total
+
+        # Ran out of sub-steps: let the caller proceed with whatever the last
+        # assistant content was, or a diagnostic string if none.
+        fallback = f"(step {step_index} incomplete: tool loop exceeded)"
+        return fallback, sub_total
+
+
+def _parse_plan(text: str) -> list[str]:
+    """Extract numbered steps from the LLM's planning response; tolerates extra whitespace and both '1.' and '1)' styles."""
+    if not text:
+        return []
+    out: list[str] = []
+    for line in text.splitlines():
+        match = _STEP_LINE_RE.match(line)
+        if match:
+            body = match.group(1).strip()
+            if body:
+                out.append(body)
+    return out
+
+
+def _join_blocks(*blocks: str) -> str:
+    """Join non-empty string blocks with blank lines (drops any empty or whitespace-only block)."""
+    return "\n\n".join(b for b in blocks if b and b.strip())
