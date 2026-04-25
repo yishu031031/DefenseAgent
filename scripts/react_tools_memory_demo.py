@@ -1,19 +1,27 @@
-"""End-to-end ReActAgent demo: calculator tool + Tavily web search + memory recall.
+"""End-to-end ReActAgent demo: chained calculator + Tavily web search + memory recall.
 
-Three turns against ONE agent instance, sharing memory across the turns:
+Three multi-step turns against ONE agent instance, sharing memory across
+the turns. Each turn requires the LLM to invoke multiple tools in
+sequence and pass intermediate values forward — the classic ReAct
+Thought → Action → Observation → Thought → … loop.
 
-  Turn 1 — math question. The LLM picks the `calculator` tool, gets a
-           number, answers in plain text. The Q->A is persisted to mem0
-           as memory_type='outcome'.
+  Turn 1 — chained calculator (3 sequential calculator calls).
+           The LLM must compute a = 47*89, then b = sqrt(a+122) using
+           the value of a, then result = (a-100)/b using both. Each
+           call's output feeds the next.
 
-  Turn 2 — open-domain question. The LLM picks the `web_search` tool
-           (Tavily REST), summarises the top results, answers. Again
-           persisted as 'outcome'.
+  Turn 2 — web research × 2 + arithmetic × 2 (4 tool calls).
+           Two web_search calls pull two birth years; two calculator
+           calls reduce them to age difference + average.
 
-  Turn 3 — recall question that points back at Turn 1 ("what math
-           problem did I ask earlier?"). The LLM picks `memory_recall`
-           (built into BaseAgent), retrieves the Turn-1 outcome record,
-           and answers from it.
+  Turn 3 — memory_recall + web_search + calculator (3 tool calls).
+           memory_recall pulls the result from Turn 1 out of mem0,
+           web_search pulls a current fact, calculator combines them.
+
+The trace printer surfaces every event the agent emits — its
+intermediate `thought:` text, every tool_call with its arguments, every
+tool result, and the final answer — so you can read the full ReAct loop
+end-to-end.
 
 Memory is rooted in a fresh tempdir so each run starts clean — nothing
 persists across invocations of this script.
@@ -33,6 +41,7 @@ Required env (.env at the project root):
 import argparse
 import ast
 import asyncio
+import logging
 import math
 import operator
 import os
@@ -44,6 +53,12 @@ import httpx
 from dotenv import load_dotenv
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+# Quiet mem0's optional-dependency notices ("Failed to load spaCy …", BM25 hint)
+# — they are informational, not failures, and only fire when the optional
+# packages are absent. Run with --verbose to see them.
+for _name in ("mem0.utils.spacy_models", "mem0.utils.factory", "mem0.memory.main"):
+    logging.getLogger(_name).setLevel(logging.ERROR)
 
 from DefenseAgent.agent import ReActAgent
 from DefenseAgent.config import AgentProfile
@@ -150,31 +165,47 @@ def _banner(title: str) -> None:
     print(f"\n{line}\n{title}\n{line}")
 
 
+def _truncate(text: str, n: int) -> str:
+    """Trim `text` to `n` chars, collapsing newlines and adding an ellipsis."""
+    flat = " ".join((text or "").split())
+    return flat if len(flat) <= n else flat[: n - 1] + "…"
+
+
+def _format_args(args: dict) -> str:
+    """Render tool arguments as `key=value` pairs, truncated for readability."""
+    return ", ".join(f"{k}={_truncate(str(v), 80)!r}" for k, v in args.items())
+
+
 def _print_step_trace(steps) -> None:
-    """Print one short line per AgentStep so you can see the LLM's path through tools."""
+    """Print one line per ReAct event — the LLM's intermediate reasoning, every tool call with its args, every tool result, and the final answer banner — so the multi-step ReAct loop is visible end-to-end."""
+    tool_calls_count = 0
     for s in steps:
         if s.kind == "tool_call":
-            names = ", ".join(tc.name for tc in s.tool_calls)
-            print(f"   [step {s.index}] tool_call → {names}")
+            if s.content:
+                print(f"   [step {s.index}] thought   {_truncate(s.content, 180)}")
+            for tc in s.tool_calls:
+                tool_calls_count += 1
+                print(f"   [step {s.index}] tool_call {tc.name}({_format_args(tc.arguments)})")
         elif s.kind == "tool_result":
             for tr in s.tool_results:
-                preview = (tr.content or "").splitlines()[0][:120]
-                print(f"   [step {s.index}] tool_result ({tr.name}) → {preview}")
+                print(f"   [step {s.index}] result    [{tr.name}] {_truncate(tr.content or '', 180)}")
         elif s.kind == "answer":
-            print(f"   [step {s.index}] answer ({s.usage.total_tokens if s.usage else 0} tok)")
+            tokens = s.usage.total_tokens if s.usage else 0
+            print(f"   [step {s.index}] answer    ({tokens} tok)")
+    print(f"   ── {tool_calls_count} tool call(s) total ──")
 
 
 async def _run_turn(agent: ReActAgent, turn: int, task: str) -> None:
-    """Run a single turn, print the answer + a compact trace, and surface failures inline."""
+    """Run a single turn end-to-end, print the answer + a compact trace, surface failures inline."""
     print(f"\n--- Turn {turn} ---")
     print(f"User : {task}")
     try:
-        result = await agent.run(task, max_steps=6)
+        result = await agent.run(task, max_steps=12)
     except Exception as e:
         print(f"[demo] turn {turn} raised {type(e).__name__}: {e}")
         return
     print(f"Maya : {result.final_answer}")
-    print(f"Trace:")
+    print("Trace:")
     _print_step_trace(result.steps)
     print(
         f"Total tokens: {result.usage.total_tokens} "
@@ -229,24 +260,38 @@ async def main() -> int:
         compactor=compactor,
         reflect_after_run=False,  # keep the demo cheap; no extra LLM call after each turn
     ) as agent:
-        _banner("Turn 1 — exercises the calculator tool")
+        _banner("Turn 1 — chained calculator calls (intermediate values feed the next)")
         await _run_turn(
             agent, 1,
-            "What is 47 * 89 + sqrt(144)? Use a tool — don't do the arithmetic in your head.",
+            "Walk through this step by step. Use the calculator tool for every arithmetic "
+            "operation — never do math in your head:\n"
+            "  Step 1: a = 47 * 89\n"
+            "  Step 2: b = sqrt(a + 122)        (use the value of a from step 1)\n"
+            "  Step 3: result = (a - 100) / b   (use both a and b)\n"
+            "Round the final result to 2 decimals. Report a, b, and result.",
         )
 
-        _banner("Turn 2 — exercises the Tavily web search tool")
+        _banner("Turn 2 — web research × 2 + arithmetic")
         await _run_turn(
             agent, 2,
-            "Use the web_search tool to find out who won the Nobel Prize in Physics in 2024, "
-            "then tell me their name and what they were awarded for.",
+            "Use the web_search tool TWICE — once for each fact — and then the calculator:\n"
+            "  (1) Find the year Geoffrey Hinton was born.\n"
+            "  (2) Find the year John J. Hopfield was born.\n"
+            "  (3) Compute the absolute age difference (use calculator).\n"
+            "  (4) Compute the average of the two birth years (use calculator).\n"
+            "Report all four numbers (the two birth years, the difference, the average).",
         )
 
-        _banner("Turn 3 — exercises memory_recall across turns")
+        _banner("Turn 3 — memory_recall + web search + arithmetic, chained")
         await _run_turn(
             agent, 3,
-            "Earlier I asked you to compute a math expression. "
-            "Look in your memory and tell me what the expression was and the answer you gave.",
+            "Three steps, in order:\n"
+            "  (1) Use memory_recall to find the FINAL numeric result you computed in our "
+            "first exchange (the rounded result from step 3 of the chained-calculator turn).\n"
+            "  (2) Use web_search to find the population of Iceland in 2024.\n"
+            "  (3) Use the calculator to divide Iceland's population by that earlier "
+            "result, rounded to the nearest integer.\n"
+            "Report the recalled number, Iceland's population, and the final ratio.",
         )
 
     return 0
