@@ -1,4 +1,5 @@
 import re
+from typing import Any
 
 from DefenseAgent.agent.base import (
     AgentError,
@@ -60,6 +61,7 @@ class PlanAndSolveAgent(BaseAgent):
         reflector: Reflector | None = None,
         logger: AgentLogger | None = None,
         compactor: ContextCompressor | None = None,
+        rag: Any | None = None,
         memory_recall_top_k: int = 5,
         max_substeps_per_step: int = 3,
         persist_outcome: bool = True,
@@ -74,6 +76,7 @@ class PlanAndSolveAgent(BaseAgent):
             reflector=reflector,
             logger=logger,
             compactor=compactor,
+            rag=rag,
         )
         self.memory_recall_top_k = memory_recall_top_k
         self.max_substeps_per_step = max_substeps_per_step

@@ -5,6 +5,7 @@ from DefenseAgent.agent.base import (
     AgentStepLimitError,
     BaseAgent,
     MEMORY_RECALL_TOOL_NAME,
+    RAG_SEARCH_TOOL_NAME,
     StepKind,
 )
 from DefenseAgent.agent.plan_and_solve import PlanAndSolveAgent
@@ -22,4 +23,5 @@ __all__ = [
     "AgentError",
     "AgentStepLimitError",
     "MEMORY_RECALL_TOOL_NAME",
+    "RAG_SEARCH_TOOL_NAME",
 ]

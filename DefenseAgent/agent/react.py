@@ -27,6 +27,12 @@ _REACT_INSTRUCTIONS = (
     "have enough information to answer."
 )
 
+_REACT_RAG_INSTRUCTIONS = (
+    "You also have `rag_search` for static reference documents (textbooks, "
+    "manuals, lore). Use it when a question would benefit from grounded facts "
+    "from your knowledge base, distinct from your experiential memory."
+)
+
 _TRAJECTORY_MEMORY_TYPE = "trajectory"
 
 
@@ -43,6 +49,7 @@ class ReActAgent(BaseAgent):
         reflector: Reflector | None = None,
         logger: AgentLogger | None = None,
         compactor: ContextCompressor | None = None,
+        rag: Any | None = None,
         memory_recall_top_k: int = 5,
         persist_outcome: bool = True,
         persist_trajectory: bool = True,
@@ -58,6 +65,7 @@ class ReActAgent(BaseAgent):
             reflector=reflector,
             logger=logger,
             compactor=compactor,
+            rag=rag,
         )
         self.memory_recall_top_k = memory_recall_top_k
         self.persist_outcome = persist_outcome
@@ -225,9 +233,11 @@ class ReActAgent(BaseAgent):
             self._log("warn", "agent.persist_trajectory_failed", str(e))
 
     def _build_system_prompt(self) -> str:
-        """Static system prompt: identity + ReAct instructions (+ optional user extras). Memory injection is now handled by `_condense_memory` on every loop turn."""
+        """Static system prompt: identity + ReAct instructions (+ rag tip when wired + optional user extras). Memory injection is now handled by `_condense_memory` on every loop turn."""
         parts: list[str] = [self._identity_prompt()]
         parts.append(_REACT_INSTRUCTIONS)
+        if self.rag is not None:
+            parts.append(_REACT_RAG_INSTRUCTIONS)
         if self.extra_instructions:
             parts.append(self.extra_instructions)
         return "\n\n".join(parts)

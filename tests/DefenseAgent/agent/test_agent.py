@@ -147,3 +147,51 @@ async def test_from_profile_works_for_plan_and_solve(monkeypatch: pytest.MonkeyP
         assert isinstance(agent, BaseAgent)
     finally:
         await agent.close()
+
+
+# ---------- RAG wiring through from_profile ----------
+
+
+async def test_from_profile_skips_rag_when_disabled(monkeypatch: pytest.MonkeyPatch):
+    """profile.rag.enabled=False (Maya's default) → agent.rag is None and rag_search is not registered."""
+    _set_env_for_real_construction(monkeypatch)
+    profile = AgentProfile.from_yaml(_MAYA_PROFILE)
+    assert profile.rag.enabled is False
+
+    agent = await _patched_from_profile(ReActAgent, profile)
+    try:
+        assert agent.rag is None
+        from DefenseAgent.agent import RAG_SEARCH_TOOL_NAME
+        assert RAG_SEARCH_TOOL_NAME not in agent._agent_tools
+    finally:
+        await agent.close()
+
+
+async def test_from_profile_builds_rag_when_enabled(monkeypatch: pytest.MonkeyPatch):
+    """profile.rag.enabled=True → _maybe_build_rag is invoked and the result wired onto the agent + rag_search registered."""
+    from unittest.mock import AsyncMock
+
+    _set_env_for_real_construction(monkeypatch)
+    profile = AgentProfile.from_yaml(_MAYA_PROFILE)
+    profile.rag.enabled = True
+
+    fake_rag = MagicMock(name="LlamaIndexRAG")
+    fake_rag.retrieve = AsyncMock(return_value=[])
+
+    from DefenseAgent.memory.default_memory import DefaultMemory
+    from DefenseAgent.agent import base as agent_base
+    from DefenseAgent.agent import RAG_SEARCH_TOOL_NAME
+
+    with patch.object(
+        DefaultMemory, "_init_memory_obj", return_value=MagicMock(name="mem0"),
+    ):
+        with patch.object(
+            agent_base, "_maybe_build_rag", AsyncMock(return_value=fake_rag),
+        ):
+            agent = await ReActAgent.from_profile(profile, load_env=False)
+
+    try:
+        assert agent.rag is fake_rag
+        assert RAG_SEARCH_TOOL_NAME in agent._agent_tools
+    finally:
+        await agent.close()

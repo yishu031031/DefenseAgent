@@ -1,3 +1,5 @@
+from typing import Any
+
 from DefenseAgent.agent.base import (
     AgentResult,
     AgentStep,
@@ -26,11 +28,12 @@ class SimpleAgent(BaseAgent):
         reflector: Reflector | None = None,
         logger: AgentLogger | None = None,
         compactor: ContextCompressor | None = None,
+        rag: Any | None = None,
         persist_outcome: bool = True,
         reflect_after_run: bool = True,
         extra_instructions: str | None = None,
     ) -> None:
-        """Wire the base modules; SimpleAgent ignores tools at the LLM call site (kept on the registry for memory_recall and uniformity with other agents)."""
+        """Wire the base modules; SimpleAgent ignores tools at the LLM call site (kept on the registry for memory_recall/rag_search and uniformity with other agents)."""
         super().__init__(
             profile,
             llm=llm,
@@ -39,6 +42,7 @@ class SimpleAgent(BaseAgent):
             reflector=reflector,
             logger=logger,
             compactor=compactor,
+            rag=rag,
         )
         self.persist_outcome = persist_outcome
         self.reflect_after_run = reflect_after_run

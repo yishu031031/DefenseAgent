@@ -8,6 +8,7 @@ from DefenseAgent.config.profile import (
     MCPServerConfig,
     MemoryConfig,
     PromptConfig,
+    RAGConfig,
     ToolsConfig,
 )
 
@@ -15,6 +16,7 @@ __all__ = [
     "AgentProfile",
     "CognitiveConfig",
     "MemoryConfig",
+    "RAGConfig",
     "ToolsConfig",
     "MCPServerConfig",
     "PromptConfig",

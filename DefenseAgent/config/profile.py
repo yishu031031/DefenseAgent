@@ -54,6 +54,24 @@ class MemoryConfig(BaseModel):
     enable_summary: bool = True
 
 
+class RAGConfig(BaseModel):
+    """Optional RAG (retrieval-augmented generation) backend configuration. Disabled by default; mirrors ms-agent's `LlamaIndexRAG` knobs."""
+
+    model_config = _STRICT_MODEL_CONFIG
+
+    enabled: bool = False
+    documents_dir: str | None = None
+    storage_dir: str | None = None
+    embedding_provider: str = Field(default="openai", pattern=r"^(openai|huggingface)$")
+    embedding: str = Field(default="Qwen/Qwen3-Embedding-0.6B", min_length=1)
+    chunk_size: int = Field(ge=1, default=512)
+    chunk_overlap: int = Field(ge=0, default=50)
+    retrieve_only: bool = True
+    top_k: int = Field(ge=1, default=5)
+    score_threshold: float = Field(ge=0.0, le=1.0, default=0.0)
+    use_huggingface: bool = False
+
+
 class MCPServerConfig(BaseModel):
     """Launch parameters for one stdio-based MCP server the agent should talk to."""
 
@@ -97,6 +115,7 @@ class AgentProfile(BaseModel):
     initial_plan: str = Field(min_length=1)
     cognitive: CognitiveConfig = Field(default_factory=CognitiveConfig)
     memory: MemoryConfig = Field(default_factory=MemoryConfig)
+    rag: RAGConfig = Field(default_factory=RAGConfig)
     tools: ToolsConfig = Field(default_factory=ToolsConfig)
     prompt: PromptConfig = Field(default_factory=PromptConfig)
 

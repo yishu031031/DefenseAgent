@@ -20,6 +20,7 @@ _AgentToolHandler = Callable[[dict[str, Any]], Awaitable[str]]
 
 
 MEMORY_RECALL_TOOL_NAME = "memory_recall"
+RAG_SEARCH_TOOL_NAME = "rag_search"
 
 _MEMORY_RECALL_TOOL_SPEC: dict[str, Any] = {
     "name": MEMORY_RECALL_TOOL_NAME,
@@ -39,6 +40,31 @@ _MEMORY_RECALL_TOOL_SPEC: dict[str, Any] = {
             "top_k": {
                 "type": "integer",
                 "description": "Maximum number of records to return (default 5, max 20).",
+            },
+        },
+        "required": ["query"],
+    },
+}
+
+_RAG_SEARCH_TOOL_SPEC: dict[str, Any] = {
+    "name": RAG_SEARCH_TOOL_NAME,
+    "description": (
+        "Search this agent's static reference knowledge base (textbooks, "
+        "manuals, character lore, world docs) for passages relevant to a "
+        "query. Distinct from `memory_recall` which searches dynamic "
+        "experiential memory. Use this when you need facts grounded in "
+        "documents you've been given."
+    ),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "query": {
+                "type": "string",
+                "description": "Semantic search query — the more specific the better.",
+            },
+            "top_k": {
+                "type": "integer",
+                "description": "Maximum number of passages to return (default 5, max 20).",
             },
         },
         "required": ["query"],
@@ -91,9 +117,10 @@ class BaseAgent(ABC):
         reflector: Reflector | None = None,
         logger: AgentLogger | None = None,
         compactor: ContextCompressor | None = None,
+        rag: Any | None = None,
         memory_tools: list[MemoryTool] | None = None,
     ) -> None:
-        """Compose the modules; build the per-step memory chain (default order: [memory, compactor], skipping None)."""
+        """Compose the modules; build the per-step memory chain (default order: [memory, compactor], skipping None). When `rag` is provided, the `rag_search` built-in tool is registered alongside `memory_recall`."""
         self.profile = profile
         self.llm = llm
         self.memory = memory
@@ -101,6 +128,7 @@ class BaseAgent(ABC):
         self.reflector = reflector
         self.logger = logger
         self.compactor = compactor
+        self.rag = rag
         if memory_tools is not None:
             self.memory_tools = list(memory_tools)
         else:
@@ -108,6 +136,8 @@ class BaseAgent(ABC):
         self._agent_tools: dict[str, _AgentToolHandler] = {
             MEMORY_RECALL_TOOL_NAME: self._handle_memory_recall,
         }
+        if rag is not None:
+            self._agent_tools[RAG_SEARCH_TOOL_NAME] = self._handle_rag_search
 
     @classmethod
     async def from_profile(
@@ -119,7 +149,7 @@ class BaseAgent(ABC):
         load_env: bool = True,
         **kwargs: Any,
     ) -> "BaseAgent":
-        """Build a fully-wired agent from a profile + .env; extra kwargs forward to the subclass `__init__`."""
+        """Build a fully-wired agent from a profile + .env; extra kwargs forward to the subclass `__init__`. RAG is built lazily only when `profile.rag.enabled=True` so agents without a knowledge base avoid the llama-index dependency."""
         llm = LLM.from_env(dotenv_path=dotenv_path, load_env=load_env)
         memory = DefaultMemory.from_profile(
             profile, dotenv_path=dotenv_path, load_env=False,
@@ -128,6 +158,7 @@ class BaseAgent(ABC):
         tools = await ToolRegistry.from_profile(profile)
         reflector = Reflector(memory, llm)
         logger = _build_logger(profile, log_dir)
+        rag = await _maybe_build_rag(profile, dotenv_path=dotenv_path)
         return cls(
             profile,
             llm=llm,
@@ -136,6 +167,7 @@ class BaseAgent(ABC):
             reflector=reflector,
             logger=logger,
             compactor=compactor,
+            rag=rag,
             **kwargs,
         )
 
@@ -271,6 +303,8 @@ class BaseAgent(ABC):
         builtin_specs: list[dict[str, Any]] = []
         if MEMORY_RECALL_TOOL_NAME in self._agent_tools:
             builtin_specs.append(_MEMORY_RECALL_TOOL_SPEC)
+        if RAG_SEARCH_TOOL_NAME in self._agent_tools:
+            builtin_specs.append(_RAG_SEARCH_TOOL_SPEC)
         combined = user_specs + builtin_specs
         return combined or None
 
@@ -330,6 +364,37 @@ class BaseAgent(ABC):
             for h in hits
         )
 
+    async def _handle_rag_search(self, arguments: dict[str, Any]) -> str:
+        """Agent-owned handler for the `rag_search` tool; renders RAG passages as a bullet list with score, or a diagnostic string."""
+        if self.rag is None:
+            return "(rag_search unavailable: no RAG backend configured)"
+
+        raw_query = arguments.get("query", "")
+        query = raw_query.strip() if isinstance(raw_query, str) else ""
+        if not query:
+            return "(rag_search called with empty query)"
+
+        raw_top_k = arguments.get("top_k", self.profile.rag.top_k)
+        try:
+            top_k = int(raw_top_k)
+        except (TypeError, ValueError):
+            top_k = self.profile.rag.top_k
+        top_k = max(1, min(top_k, 20))
+
+        threshold = self.profile.rag.score_threshold
+        try:
+            hits = await self.rag.retrieve(
+                query, limit=top_k, score_threshold=threshold,
+            )
+        except Exception as e:
+            return f"(rag_search failed: {type(e).__name__}: {e})"
+        if not hits:
+            return f"(no documents matched query={query!r})"
+        return "\n".join(
+            f"- [score={float(h.get('score', 0.0)):.2f}] {truncate(h.get('text', ''), 300)}"
+            for h in hits
+        )
+
     async def _condense_memory(self, messages: list[Message]) -> list[Message]:
         """Pipeline `messages` through every memory tool in order — same shape as ms-agent's LLMAgent.condense_memory; injection + compaction live in this single hop."""
         for tool in self.memory_tools:
@@ -373,6 +438,21 @@ def truncate(text: str, max_len: int) -> str:
     if len(text) <= max_len:
         return text
     return text[: max_len - 3] + "..."
+
+
+async def _maybe_build_rag(
+    profile: AgentProfile,
+    *,
+    dotenv_path: str | None,
+) -> Any | None:
+    """Build a `LlamaIndexRAG` from the profile when `profile.rag.enabled` is True; returns None otherwise. The import is lazy so agents that don't need RAG are not forced to install llama-index."""
+    if not profile.rag.enabled:
+        return None
+    from DefenseAgent.rag.llama_index_rag import LlamaIndexRAG
+
+    return await LlamaIndexRAG.from_profile(
+        profile, load_env=False, dotenv_path=dotenv_path,
+    )
 
 
 def _build_logger(
