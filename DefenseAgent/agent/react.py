@@ -12,13 +12,7 @@ from DefenseAgent.agent.base import (
     truncate,
 )
 from DefenseAgent.agent.config import AgentConfig
-from DefenseAgent.config.profile import AgentProfile
-from DefenseAgent.llm.llm import LLM
 from DefenseAgent.llm.types import Message, TokenUsage, ToolCall
-from DefenseAgent.memory import ContextCompressor, DefaultMemory
-from DefenseAgent.ops import AgentLogger
-from DefenseAgent.reflection import Reflector
-from DefenseAgent.tools import ToolRegistry
 
 
 _REACT_INSTRUCTIONS = (
@@ -41,77 +35,41 @@ _TRAJECTORY_MEMORY_TYPE = "trajectory"
 class ReActAgent(BaseAgent):
     """Yao et al. 2022 — interleaved reasoning + acting. Memory is mem0-backed; trajectories and outcomes get tagged via memory_type for later filtering.
 
-    Two construction shapes are supported:
+    Constructed from an `AgentConfig`:
 
-    1. **`ReActAgent(config)`** — `config` is an `AgentConfig`. Recommended.
-       The agent builds its own LLM, memory, tools, reflector, compactor and
-       logger from the profile + flags. MCP servers and RAG are wired lazily
-       on the first `run()` call (since they need `await`).
+        config = AgentConfig(profile="agents/maya.yaml")
+        agent = ReActAgent(config)
 
-    2. **`ReActAgent(profile, llm=..., memory=..., tools=..., ...)`** — pass
-       pre-built components directly. Used by the test suite and any caller
-       that wants to inject custom adapters / mocks.
+    The agent builds its own LLM, memory, tools, reflector, compactor and
+    logger from the profile + flags. MCP servers and RAG (when not pre-injected)
+    are wired lazily on the first `run()` call — they need `await`.
+
+    Inject pre-built components (mocks, custom adapters) via the `llm`,
+    `memory`, `tools_registry`, `reflector`, `rag`, `logger` fields on
+    `AgentConfig`.
     """
 
-    def __init__(
-        self,
-        config: AgentConfig | AgentProfile,
-        *,
-        llm: LLM | None = None,
-        memory: DefaultMemory | None = None,
-        tools: ToolRegistry | None = None,
-        reflector: Reflector | None = None,
-        logger: AgentLogger | None = None,
-        compactor: ContextCompressor | None = None,
-        rag: Any | None = None,
-        memory_recall_top_k: int = 5,
-        persist_outcome: bool = True,
-        persist_trajectory: bool = True,
-        reflect_after_run: bool = True,
-        extra_instructions: str | None = None,
-    ) -> None:
-        """Either build everything from `AgentConfig` or accept pre-built components by keyword."""
-        if isinstance(config, AgentConfig):
-            built = build_components_sync(config)
-            super().__init__(
-                built.profile,
-                llm=built.llm,
-                memory=built.memory,
-                tools=built.tools,
-                reflector=built.reflector,
-                logger=built.logger,
-                compactor=built.compactor,
-                rag=None,
-            )
-            self._config = config
-            self.memory_recall_top_k = config.memory_recall_top_k
-            self.persist_outcome = config.persist_outcome and config.use_memory
-            self.persist_trajectory = config.persist_trajectory and config.use_memory
-            self.reflect_after_run = (
-                config.reflect_after_run and config.use_reflection and config.use_memory
-            )
-            self.extra_instructions = config.extra_instructions
-            return
-
-        if llm is None or tools is None:
-            raise TypeError(
-                "ReActAgent legacy constructor requires `llm` and `tools` keyword arguments"
-            )
+    def __init__(self, config: AgentConfig) -> None:
+        """Build the agent from an `AgentConfig` — the only supported construction path."""
+        built = build_components_sync(config)
         super().__init__(
-            config,
-            llm=llm,
-            memory=memory,
-            tools=tools,
-            reflector=reflector,
-            logger=logger,
-            compactor=compactor,
-            rag=rag,
+            built.profile,
+            llm=built.llm,
+            memory=built.memory,
+            tools=built.tools,
+            reflector=built.reflector,
+            logger=built.logger,
+            compactor=built.compactor,
+            rag=built.rag,
         )
-        self.memory_recall_top_k = memory_recall_top_k
-        self.persist_outcome = persist_outcome
-        self.persist_trajectory = persist_trajectory
-        self.reflect_after_run = reflect_after_run
-        self.extra_instructions = extra_instructions
+        self._config = config
+        self.memory_recall_top_k = config.memory_recall_top_k
+        self.persist_outcome = config.persist_outcome and config.use_memory
+        self.persist_trajectory = config.persist_trajectory and config.use_memory
+        self.reflect_after_run = (
+            config.reflect_after_run and config.use_reflection and config.use_memory
+        )
+        self.extra_instructions = config.extra_instructions
 
     async def run(
         self,

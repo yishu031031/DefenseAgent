@@ -6,7 +6,7 @@ pyyaml>=6.0
 numpy>=1.26
 mcp>=1.0.0
 
-# Module 4 (Memory) — ms-agent inheritance over a mem0 backend.
+# Module 4 (Memory) -- ms-agent inheritance over a mem0 backend.
 # `ms-agent` pulls in the full transitive tree (modelscope, qdrant-client,
 # faiss-cpu, sentence-transformers, etc.). The vendored copy at ./ms_agent/
 # shadows the pip-installed package at import time, but `pip install ms-agent`
@@ -15,6 +15,29 @@ ms-agent>=1.6.0
 mem0ai>=2.0.0
 omegaconf>=2.3.0
 loguru>=0.7.0
+
+# Optional: enable BM25 keyword search in mem0/qdrant for hybrid memory recall.
+# Without this package, qdrant degrades to vector-only search and you'll see
+# "fastembed not installed -- BM25 keyword search disabled" in the logs.
+fastembed>=0.4.0
+
+# Module 5 (RAG) -- LlamaIndexRAG core dependencies. Required when
+# `profile.rag.enabled=True` or when running the structured-extraction
+# demo with --with-rag. Both packages are imported lazily; omit them only
+# if you'll never use the RAG subsystem.
+llama-index-core>=0.10
+llama-index-embeddings-openai-like>=0.1
+
+# Optional: enable BM25 hybrid retrieval in DefenseAgent.rag.LlamaIndexRAG.
+# Without this package, hybrid_retrieve() degrades to vector-only search.
+llama-index-retrievers-bm25>=0.5.0
+
+# Optional: enable DefenseAgent.rag.StructuredDocExtractor for PDF/HTML
+# documents containing images and tables. Each backend imports its parser
+# lazily, so omitting any of these only disables that specific format.
+pdfplumber>=0.11
+beautifulsoup4>=4.12
+Pillow>=10.0
 
 pytest>=8.0.0
 pytest-asyncio>=0.23.0

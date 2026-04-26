@@ -8,6 +8,7 @@ from ms_agent.memory.default_memory import DefaultMemory as MsDefaultMemory
 from DefenseAgent.config.profile import AgentProfile
 from DefenseAgent.llm.types import Message
 from DefenseAgent.memory._bridge import (
+    MemoryBackendConfig,
     messages_ours_to_theirs,
     messages_theirs_to_ours,
     profile_to_dictconfig,
@@ -55,12 +56,16 @@ class DefaultMemory(MsDefaultMemory):
         storage_path: str | Path | None = None,
         load_env: bool = True,
         dotenv_path: str | None = None,
+        backend: MemoryBackendConfig | None = None,
     ) -> None:
-        """Build the ms-agent DictConfig from `profile` + .env, ensure the storage dir exists, then defer to ms_agent.DefaultMemory's `__init__`."""
-        if load_env:
+        """Build the ms-agent DictConfig from `profile` (+ optional backend kwargs or .env), ensure the storage dir exists, then defer to ms_agent.DefaultMemory's `__init__`. When `backend=` is given, env vars are not consulted; otherwise the legacy .env path is used."""
+        # Skip dotenv when the caller already supplied a programmatic backend —
+        # they don't want env-var influence at all.
+        if load_env and backend is None:
             load_dotenv(dotenv_path, override=False)
         config = profile_to_dictconfig(
             profile,
+            backend=backend,
             user_id=user_id,
             agent_id=agent_id,
             run_id=run_id,
@@ -179,5 +184,33 @@ class DefaultMemory(MsDefaultMemory):
     ) -> "DefaultMemory":
         """Convenience constructor matching the rest of DefenseAgent's `from_profile` pattern."""
         return cls(profile, **kwargs)
+
+    @classmethod
+    def from_kwargs(
+        cls,
+        profile: AgentProfile,
+        *,
+        backend: MemoryBackendConfig,
+        storage_path: str | Path | None = None,
+        user_id: str = "default_user",
+        agent_id: str | None = None,
+        run_id: str = "default_run",
+    ) -> "DefaultMemory":
+        """Build mem0-backed memory from explicit args — no .env required.
+
+        Use this from SDK code, tests, or multi-tenant servers where each
+        memory instance may need different LLM / embedder credentials. The
+        `from_profile` / `__init__` paths still resolve mem0 config from .env
+        for backward compatibility.
+        """
+        return cls(
+            profile,
+            backend=backend,
+            storage_path=storage_path,
+            user_id=user_id,
+            agent_id=agent_id,
+            run_id=run_id,
+            load_env=False,
+        )
 
 

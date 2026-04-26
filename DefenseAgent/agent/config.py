@@ -29,6 +29,11 @@ from pathlib import Path
 from typing import Any, Callable
 
 from DefenseAgent.config.profile import AgentProfile
+from DefenseAgent.llm.llm import LLM
+from DefenseAgent.memory import ContextCompressor, DefaultMemory, MemoryBackendConfig
+from DefenseAgent.ops import AgentLogger
+from DefenseAgent.reflection import Reflector
+from DefenseAgent.tools import ToolRegistry
 
 
 @dataclass
@@ -150,6 +155,24 @@ class AgentConfig:
 
     # default run cap
     max_steps: int | None = None
+
+    # ---- Programmatic component injection ----
+    # When any of these is given, the builder uses it as-is and skips the
+    # env-driven construction path for that component. Lets SDK callers,
+    # tests, and multi-LLM apps bypass .env entirely.
+    llm: LLM | None = None
+    memory: DefaultMemory | None = None
+    tools_registry: ToolRegistry | None = None
+    logger: AgentLogger | None = None
+    reflector: Reflector | None = None       # bypass Reflector(memory, llm) construction
+    compactor: ContextCompressor | None = None  # bypass auto-build of compactor
+    rag: Any | None = None                   # pre-built LlamaIndexRAG (or compatible duck-type)
+
+    # Programmatic mem0 backend — controls the *internal* LLM/embedder mem0
+    # uses for fact extraction (separate from the agent's chat LLM above).
+    # Only consulted when `memory` is None and `use_memory=True`; pure-code
+    # construction of memory without ever touching .env.
+    memory_backend: MemoryBackendConfig | None = None
 
     def resolved_profile(self) -> AgentProfile:
         """Return the `AgentProfile` instance, loading from YAML on demand."""

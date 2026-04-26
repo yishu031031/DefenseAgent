@@ -5,7 +5,6 @@ from unittest.mock import MagicMock
 import pytest
 
 from DefenseAgent.llm import (
-    LLMAdapterError,
     LLMProviderError,
     Message,
     StreamChunk,
@@ -14,6 +13,7 @@ from DefenseAgent.llm import (
     ToolCall,
 )
 from DefenseAgent.llm.anthropic import AnthropicAdapter
+from DefenseAgent.llm.errors import LLMAdapterError
 from tests.DefenseAgent.llm.conftest import make_fake_anthropic_response
 
 

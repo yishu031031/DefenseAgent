@@ -1,5 +1,6 @@
 import os
 import re
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -12,20 +13,41 @@ from DefenseAgent.llm.types import Message as OurMessage
 from DefenseAgent.llm.types import ToolCall
 
 
+@dataclass
+class MemoryBackendConfig:
+    """Pure-code description of mem0's LLM + embedder providers — what env vars
+    used to supply implicitly. Pass one of these to `DefaultMemory.from_kwargs`
+    (or `profile_to_dictconfig`'s `backend=` kwarg) to bypass the .env path
+    entirely. SDK callers, tests, and multi-tenant servers should use this."""
+
+    llm_provider: str          # "anthropic" / "openai" / "deepseek" / ...
+    llm_api_key: str
+    llm_model: str
+    llm_base_url: str = ""
+    embedding_provider: str = "openai"
+    embedding_api_key: str = ""
+    embedding_model: str = ""
+    embedding_base_url: str = ""
+    embedding_dims: int = 4096
+
+
 def profile_to_dictconfig(
     profile: AgentProfile,
     *,
+    backend: MemoryBackendConfig | None = None,
     user_id: str = "default_user",
     agent_id: str | None = None,
     run_id: str = "default_run",
     storage_path: str | Path | None = None,
 ) -> Any:
-    """Translate our pydantic AgentProfile into the OmegaConf DictConfig that ms-agent's Memory subclasses read; carries the ready-to-use `mem0_config` dict so DefenseAgent.DefaultMemory can bypass ms-agent's hardcoded service-URL translation. Two LLM/embedder shapes coexist on the config: a flat one at `config.llm` for ms-agent's ContextCompressor (which reads `config.llm.model` / `config.llm.openai_api_key` etc.), and a nested mem0-shape inside `config.mem0_config` for `mem0.Memory.from_config()`."""
+    """Translate our pydantic AgentProfile into the OmegaConf DictConfig that ms-agent's Memory subclasses read; carries the ready-to-use `mem0_config` dict so DefenseAgent.DefaultMemory can bypass ms-agent's hardcoded service-URL translation. Two LLM/embedder shapes coexist on the config: a flat one at `config.llm` for ms-agent's ContextCompressor (which reads `config.llm.model` / `config.llm.openai_api_key` etc.), and a nested mem0-shape inside `config.mem0_config` for `mem0.Memory.from_config()`. Pass `backend=` for pure-code construction; omit it to fall back to env-variable resolution."""
+    if backend is None:
+        backend = _backend_from_env()
     resolved_path = _resolve_storage_path(profile, storage_path)
     resolved_agent_id = agent_id or profile.id
     storage_dir = str(resolved_path / "default_memory")
-    mem0_llm = _llm_config_from_env()
-    mem0_embedder = _embedder_config_from_env()
+    mem0_llm = _llm_config_from_backend(backend)
+    mem0_embedder = _embedder_config_from_backend(backend)
     return OmegaConf.create({
         "output_dir": str(resolved_path),
         "compress": True,
@@ -49,7 +71,7 @@ def profile_to_dictconfig(
                 "enable_summary": profile.memory.enable_summary,
             },
         },
-        "llm": _flat_llm_config_from_env(),
+        "llm": _flat_llm_config_from_backend(backend),
         "mem0_config": _mem0_config(mem0_embedder, mem0_llm, storage_dir),
     })
 
@@ -158,63 +180,134 @@ def _resolve_storage_path(
     return (profile.source_dir / "memory").resolve()
 
 
-def _flat_llm_config_from_env() -> dict[str, Any]:
+# ---------------------------------------------------------------------------
+# Backend → config-block translators (pure functions; no env access).
+# ---------------------------------------------------------------------------
+
+
+def _flat_llm_config_from_backend(backend: MemoryBackendConfig) -> dict[str, Any]:
     """Build the flat-shape LLM config that ms-agent's ContextCompressor reads. Fields mirror ms-agent's `openai_llm.py`/`anthropic_llm.py` lookups: `service`, `model`, `<service>_api_key`, `<service>_base_url`. Everything OpenAI-compatible is routed through `service='openai'` so the matching base_url and api_key keys are picked up."""
-    provider, api_key, base_url, model = _resolve_provider_block()
-    service = "anthropic" if provider == "anthropic" else "openai"
-    cfg: dict[str, Any] = {"service": service, "model": model, f"{service}_api_key": api_key}
-    if base_url:
-        cfg[f"{service}_base_url"] = base_url
+    service = "anthropic" if backend.llm_provider == "anthropic" else "openai"
+    cfg: dict[str, Any] = {
+        "service": service,
+        "model": backend.llm_model,
+        f"{service}_api_key": backend.llm_api_key,
+    }
+    if backend.llm_base_url:
+        cfg[f"{service}_base_url"] = backend.llm_base_url
     return cfg
 
 
-def _resolve_provider_block() -> tuple[str, str, str, str]:
-    """Read AGENT_LAB_LLM_PROVIDER plus its per-provider env block (`<PROVIDER>_API_KEY`, `_BASE_URL`, `_MODEL`); raises if the provider or its required fields are missing."""
-    provider = os.environ.get("AGENT_LAB_LLM_PROVIDER", "").strip().lower()
-    if not provider:
+def _llm_config_from_backend(backend: MemoryBackendConfig) -> dict[str, Any]:
+    """Build the mem0 `llm` config dict from a MemoryBackendConfig. mem0 only natively understands `anthropic` and `openai`; every other provider (deepseek, qwen, vllm, modelscope, openrouter) is routed through mem0's `openai` provider with the matching base_url."""
+    if backend.llm_provider == "anthropic":
+        return {
+            "provider": "anthropic",
+            "config": {"api_key": backend.llm_api_key, "model": backend.llm_model},
+        }
+    cfg: dict[str, Any] = {
+        "api_key": backend.llm_api_key,
+        "model": backend.llm_model,
+    }
+    if backend.llm_base_url:
+        cfg["openai_base_url"] = backend.llm_base_url
+    return {"provider": "openai", "config": cfg}
+
+
+def _embedder_config_from_backend(backend: MemoryBackendConfig) -> dict[str, Any]:
+    """Build the mem0 `embedder` config dict from a MemoryBackendConfig (always OpenAI-compatible — Anthropic doesn't ship embeddings)."""
+    if not backend.embedding_api_key or not backend.embedding_model:
         raise ValueError(
-            "AGENT_LAB_LLM_PROVIDER is not set; mem0 needs an LLM for fact extraction"
+            "MemoryBackendConfig.embedding_api_key and embedding_model are required; "
+            "mem0 cannot run without an embedder."
         )
-    block = provider.upper()
+    cfg: dict[str, Any] = {
+        "api_key": backend.embedding_api_key,
+        "model": backend.embedding_model,
+        "embedding_dims": backend.embedding_dims,
+    }
+    if backend.embedding_base_url:
+        cfg["openai_base_url"] = backend.embedding_base_url
+    return {"provider": backend.embedding_provider, "config": cfg}
+
+
+# ---------------------------------------------------------------------------
+# Env → backend (legacy compatibility shim).
+# ---------------------------------------------------------------------------
+
+
+def _flat_llm_config_from_env() -> dict[str, Any]:
+    """Build the flat-shape LLM config from env vars only — no embedder required.
+
+    Thin convenience for `rag/_bridge.py` and any caller that needs ms-agent's
+    flat LLM dict but isn't building memory (so EMBEDDING_* doesn't have to be
+    set). Reads `AGENT_LAB_LLM_PROVIDER` + the matching `<PROVIDER>_API_KEY` /
+    `_BASE_URL` / `_MODEL` block.
+    """
+    llm_provider = os.environ.get("AGENT_LAB_LLM_PROVIDER", "").strip().lower()
+    if not llm_provider:
+        raise ValueError(
+            "AGENT_LAB_LLM_PROVIDER is not set; cannot build LLM config."
+        )
+    block = llm_provider.upper()
     api_key = os.environ.get(f"{block}_API_KEY", "")
     base_url = os.environ.get(f"{block}_BASE_URL", "")
     model = os.environ.get(f"{block}_MODEL", "")
     if not api_key or not model:
         raise ValueError(
+            f"{block}_API_KEY and {block}_MODEL must be set in .env"
+        )
+    # Reuse the backend-shaped translator with a temporary backend that has no
+    # embedder fields populated — the flat helper doesn't read them.
+    backend = MemoryBackendConfig(
+        llm_provider=llm_provider,
+        llm_api_key=api_key,
+        llm_model=model,
+        llm_base_url=base_url,
+    )
+    return _flat_llm_config_from_backend(backend)
+
+
+def _backend_from_env() -> MemoryBackendConfig:
+    """Build a MemoryBackendConfig by reading the same env vars the codebase used to read directly. Called from `profile_to_dictconfig` when no explicit `backend=` is supplied — preserves the original .env-driven behavior for callers that haven't migrated yet."""
+    llm_provider = os.environ.get("AGENT_LAB_LLM_PROVIDER", "").strip().lower()
+    if not llm_provider:
+        raise ValueError(
+            "AGENT_LAB_LLM_PROVIDER is not set; mem0 needs an LLM for fact extraction. "
+            "Either set it in .env, or pass `backend=MemoryBackendConfig(...)` explicitly."
+        )
+    block = llm_provider.upper()
+    llm_api_key = os.environ.get(f"{block}_API_KEY", "")
+    llm_base_url = os.environ.get(f"{block}_BASE_URL", "")
+    llm_model = os.environ.get(f"{block}_MODEL", "")
+    if not llm_api_key or not llm_model:
+        raise ValueError(
             f"{block}_API_KEY and {block}_MODEL must be set in .env for mem0"
         )
-    return provider, api_key, base_url, model
 
-
-def _llm_config_from_env() -> dict[str, Any]:
-    """Build the mem0 `llm` config dict from AGENT_LAB_LLM_PROVIDER + per-provider .env block. mem0 only natively understands `anthropic` and `openai`; every other provider (deepseek, qwen, vllm, modelscope, openrouter) is routed through mem0's `openai` provider with the matching base_url."""
-    provider, api_key, base_url, model = _resolve_provider_block()
-    if provider == "anthropic":
-        return {"provider": "anthropic", "config": {"api_key": api_key, "model": model}}
-    cfg: dict[str, Any] = {"api_key": api_key, "model": model}
-    if base_url:
-        cfg["openai_base_url"] = base_url
-    return {"provider": "openai", "config": cfg}
-
-
-def _embedder_config_from_env() -> dict[str, Any]:
-    """Build the mem0 `embedder` config dict from EMBEDDING_* env vars (always OpenAI-compatible)."""
-    api_key = os.environ.get("EMBEDDING_API_KEY", "")
-    base_url = os.environ.get("EMBEDDING_BASE_URL", "")
-    model = os.environ.get("EMBEDDING_MODEL", "")
-    if not api_key or not model:
+    embedding_api_key = os.environ.get("EMBEDDING_API_KEY", "")
+    embedding_base_url = os.environ.get("EMBEDDING_BASE_URL", "")
+    embedding_model = os.environ.get("EMBEDDING_MODEL", "")
+    if not embedding_api_key or not embedding_model:
         raise ValueError(
             "EMBEDDING_API_KEY and EMBEDDING_MODEL must be set in .env"
         )
-    cfg: dict[str, Any] = {"api_key": api_key, "model": model}
-    if base_url:
-        cfg["openai_base_url"] = base_url
+    embedding_dims = 4096
     raw_dims = os.environ.get("EMBEDDING_DIMS", "").strip()
     if raw_dims:
         try:
-            cfg["embedding_dims"] = int(raw_dims)
+            embedding_dims = int(raw_dims)
         except ValueError:
             pass
-    else:
-        cfg["embedding_dims"] = 4096
-    return {"provider": "openai", "config": cfg}
+
+    return MemoryBackendConfig(
+        llm_provider=llm_provider,
+        llm_api_key=llm_api_key,
+        llm_model=llm_model,
+        llm_base_url=llm_base_url,
+        embedding_provider="openai",
+        embedding_api_key=embedding_api_key,
+        embedding_model=embedding_model,
+        embedding_base_url=embedding_base_url,
+        embedding_dims=embedding_dims,
+    )

@@ -21,6 +21,7 @@ from tests.DefenseAgent.agent._support import (
     fake_memory,
     make_profile,
     resp,
+    make_test_config,
 )
 
 
@@ -36,12 +37,12 @@ def _fake_rag(hits: list[dict[str, Any]] | None = None) -> Any:
 
 def test_rag_search_absent_when_no_rag_backend():
     profile = make_profile()
-    agent = ReActAgent(
-        profile,
-        llm=ScriptedLLM([]),  # type: ignore[arg-type]
-        memory=fake_memory(profile),
-        tools=ToolRegistry(),
-    )
+    agent = ReActAgent(make_test_config(
+            profile=profile,
+            llm=ScriptedLLM([]),
+            memory=fake_memory(profile),
+            tools=ToolRegistry(),
+        ))
     specs = agent._combined_tool_specs() or []
     assert RAG_SEARCH_TOOL_NAME not in [s["name"] for s in specs]
     assert RAG_SEARCH_TOOL_NAME not in agent._agent_tools
@@ -49,13 +50,13 @@ def test_rag_search_absent_when_no_rag_backend():
 
 def test_rag_search_appears_after_memory_recall_when_rag_wired():
     profile = make_profile()
-    agent = ReActAgent(
-        profile,
-        llm=ScriptedLLM([]),  # type: ignore[arg-type]
-        memory=fake_memory(profile),
-        tools=ToolRegistry(),
-        rag=_fake_rag(),
-    )
+    agent = ReActAgent(make_test_config(
+            profile=profile,
+            llm=ScriptedLLM([]),
+            memory=fake_memory(profile),
+            tools=ToolRegistry(),
+            rag=_fake_rag(),
+        ))
     specs = agent._combined_tool_specs()
     assert specs is not None
     names = [s["name"] for s in specs]
@@ -68,33 +69,33 @@ def test_rag_search_appears_after_memory_recall_when_rag_wired():
 
 def test_rag_search_registered_on_simple_agent_too():
     profile = make_profile()
-    agent = SimpleAgent(
-        profile,
-        llm=ScriptedLLM([]),  # type: ignore[arg-type]
-        memory=fake_memory(profile),
-        tools=ToolRegistry(),
-        rag=_fake_rag(),
-    )
+    agent = SimpleAgent(make_test_config(
+            profile=profile,
+            llm=ScriptedLLM([]),
+            memory=fake_memory(profile),
+            tools=ToolRegistry(),
+            rag=_fake_rag(),
+        ))
     assert RAG_SEARCH_TOOL_NAME in agent._agent_tools
 
 
 def test_react_prompt_mentions_rag_search_only_when_rag_present():
     profile = make_profile()
-    no_rag = ReActAgent(
-        profile,
-        llm=ScriptedLLM([]),  # type: ignore[arg-type]
-        memory=fake_memory(profile),
-        tools=ToolRegistry(),
-    )
+    no_rag = ReActAgent(make_test_config(
+            profile=profile,
+            llm=ScriptedLLM([]),
+            memory=fake_memory(profile),
+            tools=ToolRegistry(),
+        ))
     assert "rag_search" not in no_rag._build_system_prompt()
 
-    with_rag = ReActAgent(
-        profile,
-        llm=ScriptedLLM([]),  # type: ignore[arg-type]
-        memory=fake_memory(profile),
-        tools=ToolRegistry(),
-        rag=_fake_rag(),
-    )
+    with_rag = ReActAgent(make_test_config(
+            profile=profile,
+            llm=ScriptedLLM([]),
+            memory=fake_memory(profile),
+            tools=ToolRegistry(),
+            rag=_fake_rag(),
+        ))
     assert "rag_search" in with_rag._build_system_prompt()
 
 
@@ -109,13 +110,13 @@ async def test_handle_rag_search_returns_formatted_hits():
             {"text": "B+ trees keep all data in leaves.", "score": 0.78},
         ]
     )
-    agent = ReActAgent(
-        profile,
-        llm=ScriptedLLM([]),  # type: ignore[arg-type]
-        memory=fake_memory(profile),
-        tools=ToolRegistry(),
-        rag=rag,
-    )
+    agent = ReActAgent(make_test_config(
+            profile=profile,
+            llm=ScriptedLLM([]),
+            memory=fake_memory(profile),
+            tools=ToolRegistry(),
+            rag=rag,
+        ))
     out = await agent._handle_rag_search({"query": "B+ tree complexity", "top_k": 3})
 
     assert "Trees are O(log n) on average." in out
@@ -130,13 +131,13 @@ async def test_handle_rag_search_returns_formatted_hits():
 async def test_handle_rag_search_empty_query_diagnostic():
     profile = make_profile()
     rag = _fake_rag()
-    agent = ReActAgent(
-        profile,
-        llm=ScriptedLLM([]),  # type: ignore[arg-type]
-        memory=fake_memory(profile),
-        tools=ToolRegistry(),
-        rag=rag,
-    )
+    agent = ReActAgent(make_test_config(
+            profile=profile,
+            llm=ScriptedLLM([]),
+            memory=fake_memory(profile),
+            tools=ToolRegistry(),
+            rag=rag,
+        ))
     out = await agent._handle_rag_search({"query": "   "})
     assert "empty query" in out
     rag.retrieve.assert_not_awaited()
@@ -145,13 +146,13 @@ async def test_handle_rag_search_empty_query_diagnostic():
 async def test_handle_rag_search_no_hits_diagnostic():
     profile = make_profile()
     rag = _fake_rag(hits=[])
-    agent = ReActAgent(
-        profile,
-        llm=ScriptedLLM([]),  # type: ignore[arg-type]
-        memory=fake_memory(profile),
-        tools=ToolRegistry(),
-        rag=rag,
-    )
+    agent = ReActAgent(make_test_config(
+            profile=profile,
+            llm=ScriptedLLM([]),
+            memory=fake_memory(profile),
+            tools=ToolRegistry(),
+            rag=rag,
+        ))
     out = await agent._handle_rag_search({"query": "obscure topic"})
     assert "no documents matched" in out
 
@@ -160,13 +161,13 @@ async def test_handle_rag_search_swallows_backend_error():
     profile = make_profile()
     rag = _fake_rag()
     rag.retrieve.side_effect = RuntimeError("vector store offline")
-    agent = ReActAgent(
-        profile,
-        llm=ScriptedLLM([]),  # type: ignore[arg-type]
-        memory=fake_memory(profile),
-        tools=ToolRegistry(),
-        rag=rag,
-    )
+    agent = ReActAgent(make_test_config(
+            profile=profile,
+            llm=ScriptedLLM([]),
+            memory=fake_memory(profile),
+            tools=ToolRegistry(),
+            rag=rag,
+        ))
     out = await agent._handle_rag_search({"query": "anything"})
     assert "rag_search failed" in out
     assert "vector store offline" in out
@@ -176,13 +177,13 @@ async def test_handle_rag_search_top_k_defaults_and_clamps():
     """top_k missing → falls back to profile.rag.top_k; out-of-range clamps to [1, 20]."""
     profile = make_profile()
     rag = _fake_rag()
-    agent = ReActAgent(
-        profile,
-        llm=ScriptedLLM([]),  # type: ignore[arg-type]
-        memory=fake_memory(profile),
-        tools=ToolRegistry(),
-        rag=rag,
-    )
+    agent = ReActAgent(make_test_config(
+            profile=profile,
+            llm=ScriptedLLM([]),
+            memory=fake_memory(profile),
+            tools=ToolRegistry(),
+            rag=rag,
+        ))
 
     await agent._handle_rag_search({"query": "x"})
     assert rag.retrieve.await_args.kwargs["limit"] == profile.rag.top_k
@@ -200,13 +201,13 @@ async def test_llm_can_invoke_rag_search_through_dispatch():
     rag = _fake_rag(
         hits=[{"text": "A heap supports O(log n) push/pop.", "score": 0.88}]
     )
-    agent = ReActAgent(
-        profile,
-        llm=ScriptedLLM([]),  # type: ignore[arg-type]
-        memory=fake_memory(profile),
-        tools=ToolRegistry(),
-        rag=rag,
-    )
+    agent = ReActAgent(make_test_config(
+            profile=profile,
+            llm=ScriptedLLM([]),
+            memory=fake_memory(profile),
+            tools=ToolRegistry(),
+            rag=rag,
+        ))
     tc = ToolCall(id="t1", name=RAG_SEARCH_TOOL_NAME, arguments={"query": "heap"})
 
     [result] = await agent._dispatch_tool_calls([tc])

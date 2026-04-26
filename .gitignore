@@ -4,6 +4,7 @@ __pycache__/
 *$py.class
 .pytest_cache/
 .venv/
+.venv3/
 venv/
 *.egg-info/
 .DS_Store
@@ -12,6 +13,9 @@ venv/
 logs/
 *.log
 agents/*/memory/
+
+# Demo runtime artifacts (resources, indexes, copied files)
+demo_workspace/
 
 # Local copies of upstream projects kept for reference; install via pip instead.
 ms_agent/

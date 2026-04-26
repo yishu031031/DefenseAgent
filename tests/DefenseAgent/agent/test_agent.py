@@ -13,6 +13,7 @@ from tests.DefenseAgent.agent._support import (
     fake_memory,
     make_profile,
     resp,
+    make_test_config,
 )
 
 
@@ -51,24 +52,24 @@ def test_agent_base_class_cannot_be_instantiated():
 
 def test_resolve_max_steps_uses_explicit_override():
     profile = make_profile(max_steps=10)
-    agent = ReActAgent(
-        profile,
-        llm=ScriptedLLM([]),  # type: ignore[arg-type]
-        memory=fake_memory(profile),
-        tools=ToolRegistry(),
-    )
+    agent = ReActAgent(make_test_config(
+            profile=profile,
+            llm=ScriptedLLM([]),
+            memory=fake_memory(profile),
+            tools=ToolRegistry(),
+        ))
     assert agent._resolve_max_steps(3) == 3
     assert agent._resolve_max_steps(None) == 10
 
 
 def test_resolve_max_steps_reads_from_profile_when_no_override():
     profile = make_profile(max_steps=7)
-    agent = ReActAgent(
-        profile,
-        llm=ScriptedLLM([]),  # type: ignore[arg-type]
-        memory=fake_memory(profile),
-        tools=ToolRegistry(),
-    )
+    agent = ReActAgent(make_test_config(
+            profile=profile,
+            llm=ScriptedLLM([]),
+            memory=fake_memory(profile),
+            tools=ToolRegistry(),
+        ))
     assert agent._resolve_max_steps(None) == 7
 
 
@@ -77,27 +78,27 @@ def test_resolve_max_steps_reads_from_profile_when_no_override():
 
 async def test_close_is_idempotent():
     profile = make_profile()
-    agent = ReActAgent(
-        profile,
-        llm=ScriptedLLM([]),  # type: ignore[arg-type]
-        memory=fake_memory(profile),
-        tools=ToolRegistry(),
-    )
+    agent = ReActAgent(make_test_config(
+            profile=profile,
+            llm=ScriptedLLM([]),
+            memory=fake_memory(profile),
+            tools=ToolRegistry(),
+        ))
     await agent.close()
     await agent.close()  # no error on second call
 
 
 async def test_async_context_manager_closes_on_exit():
     profile = make_profile()
-    agent = ReActAgent(
-        profile,
-        llm=ScriptedLLM([resp(content="x")]),  # type: ignore[arg-type]
-        memory=fake_memory(profile),
-        tools=ToolRegistry(),
-        memory_recall_top_k=0,
-        persist_outcome=False,
-        reflect_after_run=False,
-    )
+    agent = ReActAgent(make_test_config(
+            profile=profile,
+            llm=ScriptedLLM([resp(content="x")]),
+            memory=fake_memory(profile),
+            tools=ToolRegistry(),
+            memory_recall_top_k=0,
+            persist_outcome=False,
+            reflect_after_run=False,
+        ))
     async with agent as managed:
         result = await managed.run("task", max_steps=2)
         assert result.final_answer == "x"
@@ -168,7 +169,7 @@ async def test_from_profile_skips_rag_when_disabled(monkeypatch: pytest.MonkeyPa
 
 
 async def test_from_profile_builds_rag_when_enabled(monkeypatch: pytest.MonkeyPatch):
-    """profile.rag.enabled=True → _maybe_build_rag is invoked and the result wired onto the agent + rag_search registered."""
+    """profile.rag.enabled=True → LlamaIndexRAG.from_profile is invoked during async setup and the result wired onto the agent + rag_search registered."""
     from unittest.mock import AsyncMock
 
     _set_env_for_real_construction(monkeypatch)
@@ -179,14 +180,14 @@ async def test_from_profile_builds_rag_when_enabled(monkeypatch: pytest.MonkeyPa
     fake_rag.retrieve = AsyncMock(return_value=[])
 
     from DefenseAgent.memory.default_memory import DefaultMemory
-    from DefenseAgent.agent import base as agent_base
+    from DefenseAgent.rag.llama_index_rag import LlamaIndexRAG
     from DefenseAgent.agent import RAG_SEARCH_TOOL_NAME
 
     with patch.object(
         DefaultMemory, "_init_memory_obj", return_value=MagicMock(name="mem0"),
     ):
         with patch.object(
-            agent_base, "_maybe_build_rag", AsyncMock(return_value=fake_rag),
+            LlamaIndexRAG, "from_profile", AsyncMock(return_value=fake_rag),
         ):
             agent = await ReActAgent.from_profile(profile, load_env=False)
 

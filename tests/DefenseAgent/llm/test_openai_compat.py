@@ -6,7 +6,6 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from DefenseAgent.llm import (
-    LLMAdapterError,
     LLMProviderError,
     Message,
     StreamChunk,
@@ -14,6 +13,7 @@ from DefenseAgent.llm import (
     TextDelta,
     ToolCall,
 )
+from DefenseAgent.llm.errors import LLMAdapterError
 from DefenseAgent.llm.openai_compat import OpenAICompatibleAdapter
 from tests.DefenseAgent.llm.conftest import make_fake_openai_response
 

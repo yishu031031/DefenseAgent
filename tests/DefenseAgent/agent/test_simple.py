@@ -19,6 +19,7 @@ from tests.DefenseAgent.agent._support import (
     ScriptedLLM,
     fake_memory,
     make_profile,
+    make_test_config,
     resp,
 )
 
@@ -34,9 +35,9 @@ def _make_agent(
 ) -> SimpleAgent:
     """Build a SimpleAgent with stubbed deps for offline tests."""
     profile = make_profile()
-    return SimpleAgent(
-        profile,
-        llm=llm or ScriptedLLM([resp(content="hi")]),  # type: ignore[arg-type]
+    config = make_test_config(
+        profile=profile,
+        llm=llm or ScriptedLLM([resp(content="hi")]),
         memory=memory or fake_memory(profile),
         tools=ToolRegistry(),
         reflector=reflector,
@@ -44,6 +45,7 @@ def _make_agent(
         reflect_after_run=reflect_after_run,
         extra_instructions=extra_instructions,
     )
+    return SimpleAgent(config)
 
 
 def test_simple_agent_inherits_base_agent():
@@ -89,14 +91,15 @@ async def test_extra_instructions_appended_to_system_prompt():
 async def test_run_invokes_memory_condensation_before_chat():
     profile = make_profile()
     memory = fake_memory(profile)
-    agent = SimpleAgent(
-        profile,
-        llm=ScriptedLLM([resp(content="ok")]),  # type: ignore[arg-type]
+    config = make_test_config(
+        profile=profile,
+        llm=ScriptedLLM([resp(content="ok")]),
         memory=memory,
         tools=ToolRegistry(),
         persist_outcome=False,
         reflect_after_run=False,
     )
+    agent = SimpleAgent(config)
     await agent.run("hi")
     assert memory.run.await_count == 1
 

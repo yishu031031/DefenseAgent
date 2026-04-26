@@ -10,6 +10,7 @@ from tests.DefenseAgent.agent._support import (
     ScriptedLLM,
     fake_memory,
     make_profile,
+    make_test_config,
     resp,
 )
 
@@ -19,15 +20,16 @@ def _bare_agent(llm, *, profile=None, tools=None, memory=None) -> ReActAgent:
     profile = profile or make_profile()
     tools = tools or ToolRegistry()
     memory = memory or fake_memory(profile)
-    return ReActAgent(
-        profile,
-        llm=llm,  # type: ignore[arg-type]
+    config = make_test_config(
+        profile=profile,
+        llm=llm,
         memory=memory,
         tools=tools,
         memory_recall_top_k=0,
         persist_outcome=False,
         reflect_after_run=False,
     )
+    return ReActAgent(config)
 
 
 # ---------- happy paths ----------
@@ -133,15 +135,16 @@ async def test_persist_outcome_writes_observation_to_memory():
     profile = make_profile()
     memory = fake_memory(profile)
     llm = ScriptedLLM([resp(content="final answer")])
-    agent = ReActAgent(
-        profile,
-        llm=llm,  # type: ignore[arg-type]
+    config = make_test_config(
+        profile=profile,
+        llm=llm,
         memory=memory,
         tools=ToolRegistry(),
         memory_recall_top_k=0,
         persist_outcome=True,
         reflect_after_run=False,
     )
+    agent = ReActAgent(config)
 
     await agent.run("describe cats", max_steps=2)
 
@@ -164,9 +167,9 @@ async def test_condense_memory_chain_runs_memory_then_compactor():
     fake_compactor.run = AsyncMock(side_effect=lambda msgs, **kw: msgs)
 
     llm = ScriptedLLM([resp(content="ok")])
-    agent = ReActAgent(
-        profile,
-        llm=llm,  # type: ignore[arg-type]
+    config = make_test_config(
+        profile=profile,
+        llm=llm,
         memory=memory,
         tools=ToolRegistry(),
         compactor=fake_compactor,
@@ -175,6 +178,7 @@ async def test_condense_memory_chain_runs_memory_then_compactor():
         persist_trajectory=False,
         reflect_after_run=False,
     )
+    agent = ReActAgent(config)
     assert agent.memory_tools == [memory, fake_compactor]
 
     await agent.run("anything", max_steps=2)
@@ -193,9 +197,9 @@ async def test_condense_memory_swallows_tool_errors_and_continues():
     memory.run = AsyncMock(side_effect=RuntimeError("memory blew up"))
 
     llm = ScriptedLLM([resp(content="answer")])
-    agent = ReActAgent(
-        profile,
-        llm=llm,  # type: ignore[arg-type]
+    config = make_test_config(
+        profile=profile,
+        llm=llm,
         memory=memory,
         tools=ToolRegistry(),
         memory_recall_top_k=0,
@@ -203,6 +207,7 @@ async def test_condense_memory_swallows_tool_errors_and_continues():
         persist_trajectory=False,
         reflect_after_run=False,
     )
+    agent = ReActAgent(config)
     result = await agent.run("anything", max_steps=2)
 
     # Run still completed despite the broken memory tool.
@@ -215,15 +220,16 @@ async def test_memory_run_is_invoked_on_every_loop_turn():
     memory = fake_memory(profile)
 
     llm = ScriptedLLM([resp(content="ok")])
-    agent = ReActAgent(
-        profile,
-        llm=llm,  # type: ignore[arg-type]
+    config = make_test_config(
+        profile=profile,
+        llm=llm,
         memory=memory,
         tools=ToolRegistry(),
         memory_recall_top_k=3,
         persist_outcome=False,
         reflect_after_run=False,
     )
+    agent = ReActAgent(config)
     await agent.run("anything", max_steps=2)
 
     # The chain must have asked memory.run() at least once before the LLM call.

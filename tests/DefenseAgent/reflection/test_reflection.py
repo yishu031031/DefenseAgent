@@ -6,7 +6,8 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from DefenseAgent.config.profile import AgentProfile
-from DefenseAgent.llm import LLM, LLMAdapter, LLMResponse, Message, TokenUsage
+from DefenseAgent.llm import LLM, LLMResponse, Message, TokenUsage
+from DefenseAgent.llm.base import LLMAdapter
 from DefenseAgent.reflection import ImportanceScorer, InsightSynthesizer, Reflector
 from DefenseAgent.reflection.scorer import parse_importance_response
 from DefenseAgent.reflection.synthesizer import (

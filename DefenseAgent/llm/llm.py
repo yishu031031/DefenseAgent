@@ -3,15 +3,15 @@ from typing import AsyncIterator
 
 from dotenv import load_dotenv
 
+from DefenseAgent.llm._registry import (
+    _resolve_adapter,
+    _validate_fields,
+    _validate_provider,
+    _VLLM_DEFAULT_KEY,
+)
 from DefenseAgent.llm.base import LLMAdapter
 from DefenseAgent.llm.errors import LLMConfigError
 from DefenseAgent.llm.types import LLMResponse, Message, StreamChunk
-
-
-_SUPPORTED_PROVIDERS = ("openai", "anthropic", "google", "deepseek", "qwen", "vllm")
-_BASE_URL_REQUIRED = {"google", "deepseek", "qwen", "vllm"}
-_API_KEY_OPTIONAL = {"vllm"}
-_VLLM_DEFAULT_KEY = "token-not-needed"
 
 
 class LLM:
@@ -22,38 +22,71 @@ class LLM:
         self.adapter = adapter
 
     @classmethod
+    def from_kwargs(
+        cls,
+        *,
+        provider: str,
+        model: str,
+        api_key: str = "",
+        base_url: str | None = None,
+    ) -> "LLM":
+        """Build an LLM from explicit arguments — the canonical instantiation path.
+
+        `from_env` itself delegates here after parsing the .env file, so this is
+        the single source of truth for "how to construct an LLM". SDK callers,
+        tests, multi-LLM apps, and anyone who needs to bypass global env state
+        should call this directly.
+        """
+        provider = (provider or "").strip().lower()
+        _validate_provider(provider)
+        _validate_fields(
+            provider,
+            api_key=api_key,
+            base_url=base_url or "",
+            model=model,
+        )
+
+        if provider == "vllm" and not api_key:
+            api_key = _VLLM_DEFAULT_KEY
+
+        adapter_cls = _resolve_adapter(provider)
+        if provider == "anthropic":
+            adapter: LLMAdapter = adapter_cls(
+                api_key=api_key,
+                model=model,
+                base_url=base_url if base_url else None,
+            )
+        else:
+            adapter = adapter_cls(
+                api_key=api_key,
+                base_url=base_url or "",
+                model=model,
+            )
+        return cls(adapter=adapter)
+
+    @classmethod
     def from_env(
         cls,
         dotenv_path: str | None = None,
         *,
         load_env: bool = True,
     ) -> "LLM":
-        """Build an LLM by resolving AGENT_LAB_LLM_PROVIDER + per-provider env block from .env."""
+        """Build an LLM by resolving AGENT_LAB_LLM_PROVIDER + per-provider env block from .env.
+
+        Convenience wrapper: parses environment variables, then defers all
+        actual instantiation to `from_kwargs`.
+        """
         if load_env:
             load_dotenv(dotenv_path, override=False)
 
-        provider = _resolve_provider()
-        api_key, base_url, model = _resolve_fields(provider)
-        _validate_fields(provider, api_key, base_url, model)
-
-        if provider == "vllm" and not api_key:
-            api_key = _VLLM_DEFAULT_KEY
-
-        if provider == "anthropic":
-            from DefenseAgent.llm.anthropic import AnthropicAdapter
-            adapter: LLMAdapter = AnthropicAdapter(
-                api_key=api_key,
-                model=model,
-                base_url=base_url if base_url else None,
-            )
-        else:
-            from DefenseAgent.llm.openai_compat import OpenAICompatibleAdapter
-            adapter = OpenAICompatibleAdapter(
-                api_key=api_key,
-                base_url=base_url,
-                model=model,
-            )
-        return cls(adapter=adapter)
+        provider = _resolve_provider_from_env()
+        api_key, base_url, model = _resolve_fields_from_env(provider)
+        return cls.from_kwargs(
+            provider=provider,
+            api_key=api_key,
+            base_url=base_url or None,
+            model=model,
+        )
 
     async def chat(
         self,
@@ -92,24 +125,24 @@ class LLM:
         )
 
 
-def _resolve_provider() -> str:
-    """Read AGENT_LAB_LLM_PROVIDER and validate it against the supported set."""
+def _resolve_provider_from_env() -> str:
+    """Read AGENT_LAB_LLM_PROVIDER from the environment, normalize, and return.
+
+    Raises LLMConfigError when unset; full provider-list validation is deferred
+    to `_validate_provider` inside `from_kwargs` so the supported-list message
+    has one canonical home.
+    """
     raw = os.environ.get("AGENT_LAB_LLM_PROVIDER", "")
     provider = raw.strip().lower()
     if not provider:
         raise LLMConfigError(
             "AGENT_LAB_LLM_PROVIDER is not set. "
-            f"Supported values: {', '.join(_SUPPORTED_PROVIDERS)}."
-        )
-    if provider not in _SUPPORTED_PROVIDERS:
-        raise LLMConfigError(
-            f"AGENT_LAB_LLM_PROVIDER={raw!r} is not supported. "
-            f"Supported values: {', '.join(_SUPPORTED_PROVIDERS)}."
+            "Set it in your .env, or use LLM.from_kwargs(provider=...) directly."
         )
     return provider
 
 
-def _resolve_fields(provider: str) -> tuple[str, str, str]:
+def _resolve_fields_from_env(provider: str) -> tuple[str, str, str]:
     """Pick api_key / base_url / model using the LLM_* override tier then the {PROVIDER}_* fallback."""
     prefix = provider.upper()
     api_key = _pick_override(
@@ -130,28 +163,3 @@ def _resolve_fields(provider: str) -> tuple[str, str, str]:
 def _pick_override(override: str | None, fallback: str | None) -> str:
     """Return `override` when non-empty, else `fallback`, else an empty string."""
     return override or fallback or ""
-
-
-def _validate_fields(
-    provider: str,
-    api_key: str,
-    base_url: str,
-    model: str,
-) -> None:
-    """Raise LLMConfigError when any provider-required field is missing."""
-    prefix = provider.upper()
-    if not model:
-        raise LLMConfigError(
-            f"MODEL is not set for provider '{provider}'. "
-            f"Set {prefix}_MODEL or LLM_MODEL_ID."
-        )
-    if provider in _BASE_URL_REQUIRED and not base_url:
-        raise LLMConfigError(
-            f"BASE_URL is required for provider '{provider}'. "
-            f"Set {prefix}_BASE_URL or LLM_BASE_URL."
-        )
-    if provider not in _API_KEY_OPTIONAL and not api_key:
-        raise LLMConfigError(
-            f"API_KEY is not set for provider '{provider}'. "
-            f"Set {prefix}_API_KEY or LLM_API_KEY."
-        )

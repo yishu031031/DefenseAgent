@@ -1,5 +1,4 @@
 import re
-from typing import Any
 
 from DefenseAgent.agent._builder import build_components_sync
 from DefenseAgent.agent.base import (
@@ -12,13 +11,7 @@ from DefenseAgent.agent.base import (
     truncate,
 )
 from DefenseAgent.agent.config import AgentConfig
-from DefenseAgent.config.profile import AgentProfile
-from DefenseAgent.llm.llm import LLM
 from DefenseAgent.llm.types import Message, TokenUsage
-from DefenseAgent.memory import ContextCompressor, DefaultMemory
-from DefenseAgent.ops import AgentLogger
-from DefenseAgent.reflection import Reflector
-from DefenseAgent.tools import ToolRegistry
 
 
 _PLAN_PROMPT_TEMPLATE = """\
@@ -53,69 +46,36 @@ _STEP_LINE_RE = re.compile(r"^\s*\d+[\.)]\s*(.+?)\s*$")
 class PlanAndSolveAgent(BaseAgent):
     """Wang et al. 2023 — plan the task into discrete steps, execute each with tools, then synthesize the final answer.
 
-    Construction shapes mirror `ReActAgent`:
+    Constructed from an `AgentConfig`:
 
-    1. `PlanAndSolveAgent(config)` where `config` is an `AgentConfig`.
-    2. `PlanAndSolveAgent(profile, llm=..., memory=..., tools=...)` — legacy
-       keyword path.
+        config = AgentConfig(profile="agents/maya.yaml")
+        agent = PlanAndSolveAgent(config)
+
+    Inject pre-built components (mocks, custom adapters) via the `llm`,
+    `memory`, `tools_registry`, `reflector`, `rag`, `logger` fields on
+    `AgentConfig`.
     """
 
-    def __init__(
-        self,
-        config: AgentConfig | AgentProfile,
-        *,
-        llm: LLM | None = None,
-        memory: DefaultMemory | None = None,
-        tools: ToolRegistry | None = None,
-        reflector: Reflector | None = None,
-        logger: AgentLogger | None = None,
-        compactor: ContextCompressor | None = None,
-        rag: Any | None = None,
-        memory_recall_top_k: int = 5,
-        max_substeps_per_step: int = 3,
-        persist_outcome: bool = True,
-        reflect_after_run: bool = True,
-    ) -> None:
-        """Either build everything from `AgentConfig` or accept pre-built components by keyword."""
-        if isinstance(config, AgentConfig):
-            built = build_components_sync(config)
-            super().__init__(
-                built.profile,
-                llm=built.llm,
-                memory=built.memory,
-                tools=built.tools,
-                reflector=built.reflector,
-                logger=built.logger,
-                compactor=built.compactor,
-                rag=None,
-            )
-            self._config = config
-            self.memory_recall_top_k = config.memory_recall_top_k
-            self.max_substeps_per_step = config.max_substeps_per_step
-            self.persist_outcome = config.persist_outcome and config.use_memory
-            self.reflect_after_run = (
-                config.reflect_after_run and config.use_reflection and config.use_memory
-            )
-            return
-
-        if llm is None or tools is None:
-            raise TypeError(
-                "PlanAndSolveAgent legacy constructor requires `llm` and `tools` keyword arguments"
-            )
+    def __init__(self, config: AgentConfig) -> None:
+        """Build the agent from an `AgentConfig` — the only supported construction path."""
+        built = build_components_sync(config)
         super().__init__(
-            config,
-            llm=llm,
-            memory=memory,
-            tools=tools,
-            reflector=reflector,
-            logger=logger,
-            compactor=compactor,
-            rag=rag,
+            built.profile,
+            llm=built.llm,
+            memory=built.memory,
+            tools=built.tools,
+            reflector=built.reflector,
+            logger=built.logger,
+            compactor=built.compactor,
+            rag=built.rag,
         )
-        self.memory_recall_top_k = memory_recall_top_k
-        self.max_substeps_per_step = max_substeps_per_step
-        self.persist_outcome = persist_outcome
-        self.reflect_after_run = reflect_after_run
+        self._config = config
+        self.memory_recall_top_k = config.memory_recall_top_k
+        self.max_substeps_per_step = config.max_substeps_per_step
+        self.persist_outcome = config.persist_outcome and config.use_memory
+        self.reflect_after_run = (
+            config.reflect_after_run and config.use_reflection and config.use_memory
+        )
 
     async def run(
         self,

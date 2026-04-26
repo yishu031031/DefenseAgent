@@ -414,3 +414,269 @@ def test_setup_embedding_model_dispatches_by_provider(tmp_path: Path):
     ) as mock_super:
         rag._setup_embedding_model(rag.config)
         mock_super.assert_called_once()
+
+
+# ---------- hybrid_retrieve ----------
+
+
+async def test_hybrid_retrieve_returns_empty_when_no_index(tmp_path: Path):
+    """No index loaded → return [] without calling super()."""
+    profile = _make_profile(tmp_path)
+    rag = _build_rag(profile)
+    rag.index = None
+
+    result = await rag.hybrid_retrieve("anything")
+    assert result == []
+
+
+async def test_hybrid_retrieve_defaults_to_profile_top_k(tmp_path: Path):
+    """When `limit` is None, top_k comes from profile.rag.top_k."""
+    profile = _make_profile(tmp_path)
+    profile.rag.top_k = 7
+    rag = _build_rag(profile)
+    rag.index = MagicMock()  # truthy → bypass empty-index guard
+
+    fake_super = AsyncMock(return_value=[])
+    with patch(
+        "ms_agent.rag.llama_index_rag.LlamaIndexRAG.hybrid_search",
+        fake_super,
+    ):
+        await rag.hybrid_retrieve("q")
+
+    fake_super.assert_awaited_once_with("q", top_k=7)
+
+
+async def test_hybrid_retrieve_explicit_limit_overrides_profile(tmp_path: Path):
+    """An explicit `limit` arg overrides profile.rag.top_k."""
+    profile = _make_profile(tmp_path)
+    profile.rag.top_k = 7
+    rag = _build_rag(profile)
+    rag.index = MagicMock()
+
+    fake_super = AsyncMock(return_value=[])
+    with patch(
+        "ms_agent.rag.llama_index_rag.LlamaIndexRAG.hybrid_search",
+        fake_super,
+    ):
+        await rag.hybrid_retrieve("q", limit=2)
+
+    fake_super.assert_awaited_once_with("q", top_k=2)
+
+
+async def test_hybrid_retrieve_filters_below_score_threshold(tmp_path: Path):
+    """Results with score < threshold are dropped."""
+    profile = _make_profile(tmp_path)
+    rag = _build_rag(profile)
+    rag.index = MagicMock()
+
+    payload = [
+        {"text": "high", "score": 0.9, "metadata": {}, "node_id": "n1"},
+        {"text": "mid", "score": 0.5, "metadata": {}, "node_id": "n2"},
+        {"text": "low", "score": 0.1, "metadata": {}, "node_id": "n3"},
+    ]
+    fake_super = AsyncMock(return_value=payload)
+    with patch(
+        "ms_agent.rag.llama_index_rag.LlamaIndexRAG.hybrid_search",
+        fake_super,
+    ):
+        result = await rag.hybrid_retrieve("q", score_threshold=0.4)
+
+    assert [r["text"] for r in result] == ["high", "mid"]
+
+
+async def test_hybrid_retrieve_defaults_to_profile_score_threshold(tmp_path: Path):
+    """When `score_threshold` is None, profile.rag.score_threshold is used."""
+    profile = _make_profile(tmp_path)
+    profile.rag.score_threshold = 0.6
+    rag = _build_rag(profile)
+    rag.index = MagicMock()
+
+    payload = [
+        {"text": "keep", "score": 0.7, "metadata": {}, "node_id": "n1"},
+        {"text": "drop", "score": 0.3, "metadata": {}, "node_id": "n2"},
+    ]
+    fake_super = AsyncMock(return_value=payload)
+    with patch(
+        "ms_agent.rag.llama_index_rag.LlamaIndexRAG.hybrid_search",
+        fake_super,
+    ):
+        result = await rag.hybrid_retrieve("q")
+
+    assert [r["text"] for r in result] == ["keep"]
+
+
+# ---------- add_structured_chunks + get_resource_path ----------
+
+
+async def test_add_structured_chunks_skips_when_empty(tmp_path: Path):
+    """An empty list is a no-op; index stays None and no llama_index import is forced."""
+    profile = _make_profile(tmp_path)
+    rag = _build_rag(profile)
+    rag.index = None
+
+    await rag.add_structured_chunks([])
+
+    assert rag.index is None
+
+
+def _patch_llama_index_core(fake_doc_cls, fake_index_cls):
+    """Build a context manager that drops fake llama_index.core into sys.modules."""
+    fake_core = types.ModuleType("llama_index.core")
+    fake_core.Document = fake_doc_cls
+    fake_core.VectorStoreIndex = fake_index_cls
+    return patch.dict(
+        sys.modules,
+        {
+            "llama_index": types.ModuleType("llama_index"),
+            "llama_index.core": fake_core,
+        },
+    )
+
+
+async def test_add_structured_chunks_persists_paths_relative_to_storage(tmp_path: Path):
+    """Resources living under storage_dir are serialized as POSIX-relative paths
+    so the index stays portable across machines / OSes."""
+    from DefenseAgent.rag.extraction import StructuredChunk, StructuredResource
+
+    profile = _make_profile(tmp_path)
+    rag = _build_rag(profile)
+    rag.retrieve_only = True
+
+    storage_root = Path(rag.storage_dir).resolve()
+    img_path = storage_root / "resources" / "doc-hash" / "img0.png"
+    img_path.parent.mkdir(parents=True, exist_ok=True)
+    img_path.write_bytes(b"PNG")
+
+    chunks = [
+        StructuredChunk(
+            text="hello <resource_info>r1</resource_info>",
+            resources=[
+                StructuredResource(id="r1", kind="image", path=img_path, mime_type="image/png"),
+            ],
+            metadata={"source": "x.pdf", "page": 1},
+        )
+    ]
+
+    fake_doc_cls = MagicMock(name="Document")
+    fake_doc_cls.return_value = MagicMock(name="document_instance")
+    fake_index_cls = MagicMock(name="VectorStoreIndex")
+    fake_index_cls.from_documents.return_value = MagicMock(name="index_instance")
+
+    with _patch_llama_index_core(fake_doc_cls, fake_index_cls):
+        await rag.add_structured_chunks(chunks)
+
+    fake_doc_cls.assert_called_once()
+    kwargs = fake_doc_cls.call_args.kwargs
+    assert kwargs["text"] == chunks[0].text
+    assert kwargs["metadata"]["resource_ids"] == ["r1"]
+    # Relative + POSIX (forward slashes) so a Windows-built index loads on Linux too.
+    assert kwargs["metadata"]["resource_paths"] == ["resources/doc-hash/img0.png"]
+    assert kwargs["metadata"]["resource_kinds"] == ["image"]
+    assert kwargs["metadata"]["page"] == 1
+    fake_index_cls.from_documents.assert_called_once()
+    assert rag.index is fake_index_cls.from_documents.return_value
+
+
+async def test_add_structured_chunks_keeps_absolute_for_out_of_tree_resource(tmp_path: Path):
+    """Resources that live outside storage_dir fall back to absolute POSIX paths
+    (we'd lose them on a move, but at least we don't lie about where they are)."""
+    from DefenseAgent.rag.extraction import StructuredChunk, StructuredResource
+
+    profile = _make_profile(tmp_path)
+    rag = _build_rag(profile)
+    rag.retrieve_only = True
+
+    # Place the image OUTSIDE storage_dir (storage_dir is tmp_path / "rag").
+    out_of_tree = tmp_path / "external" / "img.png"
+    out_of_tree.parent.mkdir(parents=True, exist_ok=True)
+    out_of_tree.write_bytes(b"PNG")
+
+    chunks = [
+        StructuredChunk(
+            text="t",
+            resources=[StructuredResource(id="r", kind="image", path=out_of_tree)],
+        )
+    ]
+
+    fake_doc_cls = MagicMock(name="Document")
+    fake_doc_cls.return_value = MagicMock(name="document_instance")
+    fake_index_cls = MagicMock(name="VectorStoreIndex")
+    fake_index_cls.from_documents.return_value = MagicMock(name="index_instance")
+
+    with _patch_llama_index_core(fake_doc_cls, fake_index_cls):
+        await rag.add_structured_chunks(chunks)
+
+    paths = fake_doc_cls.call_args.kwargs["metadata"]["resource_paths"]
+    assert paths == [out_of_tree.resolve().as_posix()]
+
+
+def test_get_resource_path_returns_none_when_no_index(tmp_path: Path):
+    profile = _make_profile(tmp_path)
+    rag = _build_rag(profile)
+    rag.index = None
+
+    assert rag.get_resource_path("r1") is None
+
+
+def test_get_resource_path_resolves_relative_against_storage(tmp_path: Path):
+    """Stored relative paths are resolved against the **current** storage_dir,
+    not whatever path was used at ingest time. This is the portability win."""
+    profile = _make_profile(tmp_path)
+    rag = _build_rag(profile)
+
+    doc = MagicMock()
+    doc.metadata = {
+        "resource_ids": ["r0"],
+        "resource_paths": ["resources/abc/img0.png"],
+    }
+    fake_index = MagicMock()
+    fake_index.docstore.docs = {"d": doc}
+    rag.index = fake_index
+
+    expected = (Path(rag.storage_dir) / "resources" / "abc" / "img0.png").resolve()
+    assert rag.get_resource_path("r0") == expected
+
+
+def test_get_resource_path_simulates_cross_machine_move(tmp_path: Path):
+    """Concrete portability check: ingest with storage_dir A, change storage_dir
+    to B, lookup must still resolve (the relative path is stable, the anchor isn't)."""
+    profile = _make_profile(tmp_path)
+    rag = _build_rag(profile)
+
+    doc = MagicMock()
+    doc.metadata = {
+        "resource_ids": ["r0"],
+        "resource_paths": ["resources/abc/img0.png"],
+    }
+    fake_index = MagicMock()
+    fake_index.docstore.docs = {"d": doc}
+    rag.index = fake_index
+
+    moved_storage = tmp_path / "moved-storage"
+    moved_storage.mkdir()
+    rag.storage_dir = str(moved_storage)
+
+    expected = (moved_storage / "resources" / "abc" / "img0.png").resolve()
+    assert rag.get_resource_path("r0") == expected
+
+
+def test_get_resource_path_preserves_legacy_absolute_entries(tmp_path: Path):
+    """Old indexes built before the relative-path change keep working: absolute
+    entries are returned as-is."""
+    profile = _make_profile(tmp_path)
+    rag = _build_rag(profile)
+
+    # Use a real OS-absolute path so is_absolute() works on both Windows and Linux.
+    legacy = (tmp_path / "anywhere" / "img.png").resolve()
+
+    doc = MagicMock()
+    doc.metadata = {
+        "resource_ids": ["legacy"],
+        "resource_paths": [str(legacy)],
+    }
+    fake_index = MagicMock()
+    fake_index.docstore.docs = {"d": doc}
+    rag.index = fake_index
+
+    assert rag.get_resource_path("legacy") == legacy
+    assert rag.get_resource_path("missing") is None

@@ -14,7 +14,8 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from DefenseAgent.config import AgentProfile
-from DefenseAgent.llm import LLMAdapter, LLMProviderError, LLMResponse, Message, TokenUsage
+from DefenseAgent.llm import LLMProviderError, LLMResponse, Message, TokenUsage
+from DefenseAgent.llm.base import LLMAdapter
 from DefenseAgent.llm.types import ToolCall
 from DefenseAgent.ops import AgentLogger
 from DefenseAgent.tools import ToolRegistry

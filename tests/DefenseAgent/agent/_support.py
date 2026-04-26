@@ -2,8 +2,10 @@
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
+from DefenseAgent.agent import AgentConfig
 from DefenseAgent.config import AgentProfile
 from DefenseAgent.llm.types import LLMResponse, Message, TokenUsage, ToolCall
+from DefenseAgent.tools import ToolRegistry
 
 
 class ScriptedLLM:
@@ -100,3 +102,56 @@ def added_calls(memory: Any) -> list[dict[str, Any]]:
             "memory_type": kwargs.get("memory_type"),
         })
     return out
+
+
+def make_test_config(
+    *,
+    profile: AgentProfile | None = None,
+    llm: Any = None,
+    memory: Any = None,
+    tools: ToolRegistry | None = None,
+    reflector: Any = None,
+    compactor: Any = None,
+    rag: Any = None,
+    persist_outcome: bool = False,
+    persist_trajectory: bool = False,
+    reflect_after_run: bool = False,
+    memory_recall_top_k: int = 0,
+    extra_instructions: str | None = None,
+    max_substeps_per_step: int = 3,
+    max_steps: int | None = None,
+) -> AgentConfig:
+    """Build an AgentConfig that injects pre-built test stubs and disables every
+    auto-built side-channel (compactor, logger, env-driven build paths) so unit
+    tests stay hermetic and offline.
+
+    The default behavior knobs (`persist_outcome=False`, `reflect_after_run=False`,
+    `memory_recall_top_k=0`) keep simple test agents minimal — flip them per-test
+    when exercising those code paths.
+    """
+    return AgentConfig(
+        profile=profile or make_profile(),
+        load_env=False,                       # never touch .env in tests
+        # subsystem toggles — skip all auto-builds; injection takes precedence
+        use_tools=tools is None,              # only auto-register skills if no registry injected
+        use_memory=memory is not None,        # only build mem0 if no memory injected (and we never do)
+        use_reflection=reflector is not None, # only build Reflector if no reflector injected
+        use_compactor=compactor is not None,  # only auto-build compactor when injected one wins via injection field
+        use_logger=False,                     # tests don't write logs
+        use_rag=rag is not None,              # only build RAG if injected
+        # injections
+        llm=llm,
+        memory=memory,
+        tools_registry=tools,
+        reflector=reflector,
+        compactor=compactor,
+        rag=rag,
+        # behavior knobs
+        memory_recall_top_k=memory_recall_top_k,
+        persist_outcome=persist_outcome,
+        persist_trajectory=persist_trajectory,
+        reflect_after_run=reflect_after_run,
+        extra_instructions=extra_instructions,
+        max_substeps_per_step=max_substeps_per_step,
+        max_steps=max_steps,
+    )

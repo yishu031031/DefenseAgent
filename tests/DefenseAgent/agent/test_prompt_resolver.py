@@ -13,17 +13,17 @@ from DefenseAgent.agent import ReActAgent
 from DefenseAgent.config import AgentProfile
 from DefenseAgent.tools import ToolRegistry
 
-from tests.DefenseAgent.agent._support import ScriptedLLM, fake_memory
+from tests.DefenseAgent.agent._support import ScriptedLLM, fake_memory, make_test_config
 
 
 def _build_agent(profile: AgentProfile) -> ReActAgent:
     """Construct a ReActAgent with stubbed deps so we can exercise the prompt resolver in isolation."""
-    return ReActAgent(
-        profile,
-        llm=ScriptedLLM([]),  # type: ignore[arg-type]
-        memory=fake_memory(profile),
-        tools=ToolRegistry(),
-    )
+    return ReActAgent(make_test_config(
+            profile=profile,
+            llm=ScriptedLLM([]),
+            memory=fake_memory(profile),
+            tools=ToolRegistry(),
+        ))
 
 
 def _profile(**prompt_kwargs) -> AgentProfile:

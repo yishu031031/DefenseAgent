@@ -4,6 +4,11 @@ Splits cleanly into a sync phase (everything except MCP servers and
 `LlamaIndexRAG`) and an async phase (`async_finish_setup`) that the agent
 runs lazily on the first `run()` call. The sync phase is what makes
 `agent = ReActAgent(config)` work without `await`.
+
+Resolution priority for every component: an explicit `config.<name>` injection
+wins; otherwise we fall back to building from `profile` + .env. This lets SDK
+callers and tests construct components programmatically while preserving the
+zero-config `AgentConfig(profile="...yaml")` path for local development.
 """
 from dataclasses import dataclass
 from pathlib import Path
@@ -28,45 +33,82 @@ class BuiltComponents:
     reflector: Reflector | None
     compactor: ContextCompressor | None
     logger: AgentLogger | None
+    rag: Any | None = None
 
 
 def build_components_sync(config: AgentConfig) -> BuiltComponents:
     """Build everything that does not need `await`. MCP and RAG are deferred."""
     profile = config.resolved_profile()
-    llm = LLM.from_env(dotenv_path=config.dotenv_path, load_env=config.load_env)
 
-    if config.use_memory:
-        memory = DefaultMemory(
-            profile,
-            dotenv_path=config.dotenv_path,
-            load_env=False,
-            storage_path=config.storage_path,
+    # LLM: prefer injection, else build from env.
+    if config.llm is not None:
+        llm = config.llm
+    else:
+        llm = LLM.from_env(
+            dotenv_path=config.dotenv_path, load_env=config.load_env,
         )
+
+    # Memory: three-tier priority — fully built > pure-code backend > env.
+    if config.memory is not None:
+        memory = config.memory
+    elif config.use_memory:
+        if config.memory_backend is not None:
+            memory = DefaultMemory.from_kwargs(
+                profile,
+                backend=config.memory_backend,
+                storage_path=config.storage_path,
+            )
+        else:
+            memory = DefaultMemory(
+                profile,
+                dotenv_path=config.dotenv_path,
+                load_env=False,
+                storage_path=config.storage_path,
+            )
     else:
         memory = None
 
-    tools = ToolRegistry()
-    if config.use_tools:
-        if profile.source_dir is not None:
-            for skill_ref in profile.tools.skills:
-                tools.add_skill((profile.source_dir / skill_ref).resolve())
-        for fn in config.tools:
-            tools.tool(fn)
+    # Tools: prefer injection (caller manages everything); else build from
+    # profile.skills + config.tools. MCP wiring still happens in
+    # async_finish_setup, also gated on injection.
+    if config.tools_registry is not None:
+        tools = config.tools_registry
+    else:
+        tools = ToolRegistry()
+        if config.use_tools:
+            if profile.source_dir is not None:
+                for skill_ref in profile.tools.skills:
+                    tools.add_skill((profile.source_dir / skill_ref).resolve())
+            for fn in config.tools:
+                tools.tool(fn)
 
-    if config.use_reflection and memory is not None:
+    if config.reflector is not None:
+        reflector = config.reflector
+    elif config.use_reflection and memory is not None:
         reflector = Reflector(memory, llm)
     else:
         reflector = None
 
-    if config.use_compactor:
+    if config.compactor is not None:
+        compactor = config.compactor
+    elif config.use_compactor:
         compactor = ContextCompressor(
             profile,
             load_env=False,
             storage_path=str(config.storage_path) if config.storage_path else None,
+            backend=config.memory_backend,
         )
     else:
         compactor = None
-    logger = _build_logger(profile, config.log_dir) if config.use_logger else None
+
+    # Logger: prefer injection, else build at <log_dir>/<profile.id>.log when
+    # use_logger=True.
+    if config.logger is not None:
+        logger = config.logger
+    elif config.use_logger:
+        logger = _build_logger(profile, config.log_dir)
+    else:
+        logger = None
 
     return BuiltComponents(
         profile=profile,
@@ -76,6 +118,7 @@ def build_components_sync(config: AgentConfig) -> BuiltComponents:
         reflector=reflector,
         compactor=compactor,
         logger=logger,
+        rag=config.rag,
     )
 
 
@@ -88,8 +131,12 @@ async def async_finish_setup(
 
     Returns the (optional) RAG instance the caller should attach to the agent.
     Idempotency is the caller's job — invoke this at most once per agent.
+
+    When `config.tools_registry` was injected the caller manages the tool
+    surface; we skip MCP server registration to avoid clobbering their setup.
+    Likewise when `config.rag` is pre-injected we skip the LlamaIndexRAG build.
     """
-    if config.use_tools:
+    if config.use_tools and config.tools_registry is None:
         for mcp_cfg in profile.tools.mcp:
             await tools.add_mcp(
                 command=mcp_cfg.command,
@@ -97,6 +144,9 @@ async def async_finish_setup(
                 env=mcp_cfg.env,
                 cwd=mcp_cfg.cwd,
             )
+
+    if config.rag is not None:
+        return config.rag
 
     use_rag = config.use_rag if config.use_rag is not None else profile.rag.enabled
     if not use_rag:

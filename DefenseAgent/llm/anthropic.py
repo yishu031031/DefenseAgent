@@ -97,14 +97,32 @@ class AnthropicAdapter(LLMAdapter):
                     yield TextDelta(text=delta_text)
             final = await stream.get_final_message()
 
+        # Extract any thinking blocks from the final message — text_stream above
+        # only yields text deltas, so reasoning content arrives as one payload at
+        # the end rather than incrementally. Good enough for non-real-time UX.
+        thinking_parts: list[str] = []
+        for block in (getattr(final, "content", None) or []):
+            if getattr(block, "type", None) == "thinking":
+                thinking_parts.append(getattr(block, "thinking", "") or "")
+
         raw_stop = final.stop_reason
         stop_reason = raw_stop if raw_stop in _PASSTHROUGH_STOP_REASONS else "other"
         pt = getattr(final.usage, "input_tokens", 0) or 0
         ct = getattr(final.usage, "output_tokens", 0) or 0
+        cache_read = getattr(final.usage, "cache_read_input_tokens", 0) or 0
+        cache_creation = getattr(final.usage, "cache_creation_input_tokens", 0) or 0
         yield StreamEnd(
             stop_reason=stop_reason,
-            usage=TokenUsage(prompt_tokens=pt, completion_tokens=ct, total_tokens=pt + ct),
+            usage=TokenUsage(
+                prompt_tokens=pt,
+                completion_tokens=ct,
+                total_tokens=pt + ct,
+                cache_read_tokens=cache_read,
+                cache_creation_tokens=cache_creation,
+            ),
             raw=to_dict_safe(final),
+            reasoning_content="".join(thinking_parts),
+            id=getattr(final, "id", None) or "",
         )
 
     def _build_request(
@@ -184,11 +202,16 @@ def _tool_schema_to_wire(schema: dict) -> dict:
 def _parse_response(response: Any) -> LLMResponse:
     """Turn an Anthropic /messages response into a canonical LLMResponse."""
     text_parts: list[str] = []
+    thinking_parts: list[str] = []
     tool_calls: list[ToolCall] = []
     for block in response.content:
         btype = getattr(block, "type", None)
         if btype == "text":
             text_parts.append(block.text)
+        elif btype == "thinking":
+            # Extended-thinking content lives alongside text/tool_use in the
+            # content array; ms-agent's parser missed this case.
+            thinking_parts.append(getattr(block, "thinking", "") or "")
         elif btype == "tool_use":
             tool_calls.append(
                 ToolCall(id=block.id, name=block.name, arguments=dict(block.input))
@@ -198,11 +221,22 @@ def _parse_response(response: Any) -> LLMResponse:
     stop_reason = raw_stop if raw_stop in _PASSTHROUGH_STOP_REASONS else "other"
 
     usage_raw = response.usage
-    pt, ct = usage_raw.input_tokens, usage_raw.output_tokens
+    pt = usage_raw.input_tokens
+    ct = usage_raw.output_tokens
+    cache_read = getattr(usage_raw, "cache_read_input_tokens", 0) or 0
+    cache_creation = getattr(usage_raw, "cache_creation_input_tokens", 0) or 0
     return LLMResponse(
         content="".join(text_parts),
         tool_calls=tool_calls,
-        usage=TokenUsage(prompt_tokens=pt, completion_tokens=ct, total_tokens=pt + ct),
+        usage=TokenUsage(
+            prompt_tokens=pt,
+            completion_tokens=ct,
+            total_tokens=pt + ct,
+            cache_read_tokens=cache_read,
+            cache_creation_tokens=cache_creation,
+        ),
         stop_reason=stop_reason,
         raw=to_dict_safe(response),
+        reasoning_content="".join(thinking_parts),
+        id=getattr(response, "id", None) or "",
     )

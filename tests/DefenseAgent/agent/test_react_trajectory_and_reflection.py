@@ -12,6 +12,7 @@ from tests.DefenseAgent.agent._support import (
     fake_memory,
     make_profile,
     resp,
+    make_test_config,
 )
 
 
@@ -58,16 +59,16 @@ async def test_trajectory_writes_one_observation_per_step():
             resp(content="final answer"),
         ]
     )
-    agent = ReActAgent(
-        profile,
-        llm=llm,  # type: ignore[arg-type]
-        memory=memory,
-        tools=registry,
-        memory_recall_top_k=0,
-        persist_outcome=True,
-        persist_trajectory=True,
-        reflect_after_run=False,
-    )
+    agent = ReActAgent(make_test_config(
+            profile=profile,
+            llm=llm,
+            memory=memory,
+            tools=registry,
+            memory_recall_top_k=0,
+            persist_outcome=True,
+            persist_trajectory=True,
+            reflect_after_run=False,
+        ))
 
     await agent.run("task", max_steps=5)
 
@@ -110,16 +111,16 @@ async def test_trajectory_consolidates_multiple_tool_calls_into_one_record():
             resp(content="done"),
         ]
     )
-    agent = ReActAgent(
-        profile,
-        llm=llm,  # type: ignore[arg-type]
-        memory=memory,
-        tools=registry,
-        memory_recall_top_k=0,
-        persist_outcome=False,
-        persist_trajectory=True,
-        reflect_after_run=False,
-    )
+    agent = ReActAgent(make_test_config(
+            profile=profile,
+            llm=llm,
+            memory=memory,
+            tools=registry,
+            memory_recall_top_k=0,
+            persist_outcome=False,
+            persist_trajectory=True,
+            reflect_after_run=False,
+        ))
     await agent.run("task", max_steps=5)
 
     from tests.DefenseAgent.agent._support import added_calls
@@ -152,16 +153,16 @@ async def test_persist_trajectory_false_writes_no_trajectory_records():
             resp(content="done"),
         ]
     )
-    agent = ReActAgent(
-        profile,
-        llm=llm,  # type: ignore[arg-type]
-        memory=memory,
-        tools=registry,
-        memory_recall_top_k=0,
-        persist_outcome=True,
-        persist_trajectory=False,  # ← key knob
-        reflect_after_run=False,
-    )
+    agent = ReActAgent(make_test_config(
+            profile=profile,
+            llm=llm,
+            memory=memory,
+            tools=registry,
+            memory_recall_top_k=0,
+            persist_outcome=True,
+            persist_trajectory=False,  # ← key knob
+            reflect_after_run=False,
+        ))
     await agent.run("task", max_steps=5)
 
     from tests.DefenseAgent.agent._support import added_calls
@@ -188,16 +189,16 @@ async def test_trajectory_previews_truncate_long_results():
             resp(content="done"),
         ]
     )
-    agent = ReActAgent(
-        profile,
-        llm=llm,  # type: ignore[arg-type]
-        memory=memory,
-        tools=registry,
-        memory_recall_top_k=0,
-        persist_outcome=False,
-        persist_trajectory=True,
-        reflect_after_run=False,
-    )
+    agent = ReActAgent(make_test_config(
+            profile=profile,
+            llm=llm,
+            memory=memory,
+            tools=registry,
+            memory_recall_top_k=0,
+            persist_outcome=False,
+            persist_trajectory=True,
+            reflect_after_run=False,
+        ))
     await agent.run("t", max_steps=3)
 
     from tests.DefenseAgent.agent._support import added_calls
@@ -215,17 +216,17 @@ async def test_reflection_fires_on_success():
     profile = make_profile()
     memory = fake_memory(profile)
     reflector = _FakeReflector()
-    agent = ReActAgent(
-        profile,
-        llm=ScriptedLLM([resp(content="final")]),  # type: ignore[arg-type]
-        memory=memory,
-        tools=ToolRegistry(),
-        reflector=reflector,  # type: ignore[arg-type]
-        memory_recall_top_k=0,
-        persist_outcome=False,
-        persist_trajectory=False,
-        reflect_after_run=True,
-    )
+    agent = ReActAgent(make_test_config(
+            profile=profile,
+            llm=ScriptedLLM([resp(content="final")]),
+            memory=memory,
+            tools=ToolRegistry(),
+            reflector=reflector,
+            memory_recall_top_k=0,
+            persist_outcome=False,
+            persist_trajectory=False,
+            reflect_after_run=True,
+        ))
     await agent.run("q", max_steps=2)
     assert reflector.call_count == 1
 
@@ -251,17 +252,17 @@ async def test_reflection_fires_on_max_steps_exhaustion():
         ]
     )
     reflector = _FakeReflector()
-    agent = ReActAgent(
-        profile,
-        llm=llm,  # type: ignore[arg-type]
-        memory=memory,
-        tools=registry,
-        reflector=reflector,  # type: ignore[arg-type]
-        memory_recall_top_k=0,
-        persist_outcome=False,
-        persist_trajectory=False,
-        reflect_after_run=True,
-    )
+    agent = ReActAgent(make_test_config(
+            profile=profile,
+            llm=llm,
+            memory=memory,
+            tools=registry,
+            reflector=reflector,
+            memory_recall_top_k=0,
+            persist_outcome=False,
+            persist_trajectory=False,
+            reflect_after_run=True,
+        ))
     with pytest.raises(AgentStepLimitError):
         await agent.run("loop", max_steps=3)
     # Reflection still fired despite the failure.
@@ -272,17 +273,17 @@ async def test_reflection_failure_does_not_mask_success():
     profile = make_profile()
     memory = fake_memory(profile)
     reflector = _FakeReflector(raise_on_reflect=True)
-    agent = ReActAgent(
-        profile,
-        llm=ScriptedLLM([resp(content="final")]),  # type: ignore[arg-type]
-        memory=memory,
-        tools=ToolRegistry(),
-        reflector=reflector,  # type: ignore[arg-type]
-        memory_recall_top_k=0,
-        persist_outcome=False,
-        persist_trajectory=False,
-        reflect_after_run=True,
-    )
+    agent = ReActAgent(make_test_config(
+            profile=profile,
+            llm=ScriptedLLM([resp(content="final")]),
+            memory=memory,
+            tools=ToolRegistry(),
+            reflector=reflector,
+            memory_recall_top_k=0,
+            persist_outcome=False,
+            persist_trajectory=False,
+            reflect_after_run=True,
+        ))
     # The run must return normally even though reflection raised.
     result = await agent.run("q", max_steps=2)
     assert result.final_answer == "final"
@@ -309,17 +310,17 @@ async def test_reflection_failure_does_not_mask_step_limit_error():
         ]
     )
     reflector = _FakeReflector(raise_on_reflect=True)
-    agent = ReActAgent(
-        profile,
-        llm=llm,  # type: ignore[arg-type]
-        memory=memory,
-        tools=registry,
-        reflector=reflector,  # type: ignore[arg-type]
-        memory_recall_top_k=0,
-        persist_outcome=False,
-        persist_trajectory=False,
-        reflect_after_run=True,
-    )
+    agent = ReActAgent(make_test_config(
+            profile=profile,
+            llm=llm,
+            memory=memory,
+            tools=registry,
+            reflector=reflector,
+            memory_recall_top_k=0,
+            persist_outcome=False,
+            persist_trajectory=False,
+            reflect_after_run=True,
+        ))
     # Original exception (AgentStepLimitError) must propagate, not the reflection error.
     with pytest.raises(AgentStepLimitError):
         await agent.run("loop", max_steps=2)
@@ -346,16 +347,16 @@ async def test_failure_path_persists_outcome_with_failed_prefix():
             for i in range(3)
         ]
     )
-    agent = ReActAgent(
-        profile,
-        llm=llm,  # type: ignore[arg-type]
-        memory=memory,
-        tools=registry,
-        memory_recall_top_k=0,
-        persist_outcome=True,
-        persist_trajectory=False,
-        reflect_after_run=False,
-    )
+    agent = ReActAgent(make_test_config(
+            profile=profile,
+            llm=llm,
+            memory=memory,
+            tools=registry,
+            memory_recall_top_k=0,
+            persist_outcome=True,
+            persist_trajectory=False,
+            reflect_after_run=False,
+        ))
     with pytest.raises(AgentStepLimitError):
         await agent.run("hard task", max_steps=3)
 
@@ -388,16 +389,16 @@ async def test_failure_outcome_skipped_when_persist_outcome_false():
             for i in range(2)
         ]
     )
-    agent = ReActAgent(
-        profile,
-        llm=llm,  # type: ignore[arg-type]
-        memory=memory,
-        tools=registry,
-        memory_recall_top_k=0,
-        persist_outcome=False,
-        persist_trajectory=False,
-        reflect_after_run=False,
-    )
+    agent = ReActAgent(make_test_config(
+            profile=profile,
+            llm=llm,
+            memory=memory,
+            tools=registry,
+            memory_recall_top_k=0,
+            persist_outcome=False,
+            persist_trajectory=False,
+            reflect_after_run=False,
+        ))
     with pytest.raises(AgentStepLimitError):
         await agent.run("task", max_steps=2)
     assert len(memory) == 0
@@ -407,16 +408,16 @@ async def test_reflect_after_run_false_skips_reflection_on_both_paths():
     profile = make_profile()
     memory = fake_memory(profile)
     reflector = _FakeReflector()
-    agent = ReActAgent(
-        profile,
-        llm=ScriptedLLM([resp(content="done")]),  # type: ignore[arg-type]
-        memory=memory,
-        tools=ToolRegistry(),
-        reflector=reflector,  # type: ignore[arg-type]
-        memory_recall_top_k=0,
-        persist_outcome=False,
-        persist_trajectory=False,
-        reflect_after_run=False,
-    )
+    agent = ReActAgent(make_test_config(
+            profile=profile,
+            llm=ScriptedLLM([resp(content="done")]),
+            memory=memory,
+            tools=ToolRegistry(),
+            reflector=reflector,
+            memory_recall_top_k=0,
+            persist_outcome=False,
+            persist_trajectory=False,
+            reflect_after_run=False,
+        ))
     await agent.run("q", max_steps=2)
     assert reflector.call_count == 0

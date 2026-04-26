@@ -11,6 +11,7 @@ from tests.DefenseAgent.agent._support import (
     ScriptedLLM,
     fake_memory,
     make_profile,
+    make_test_config,
     resp,
 )
 
@@ -20,9 +21,9 @@ def _bare_agent(llm, *, tools=None, max_substeps_per_step=3) -> PlanAndSolveAgen
     profile = make_profile()
     tools = tools or ToolRegistry()
     memory = fake_memory(profile)
-    return PlanAndSolveAgent(
-        profile,
-        llm=llm,  # type: ignore[arg-type]
+    config = make_test_config(
+        profile=profile,
+        llm=llm,
         memory=memory,
         tools=tools,
         memory_recall_top_k=0,
@@ -30,6 +31,7 @@ def _bare_agent(llm, *, tools=None, max_substeps_per_step=3) -> PlanAndSolveAgen
         persist_outcome=False,
         reflect_after_run=False,
     )
+    return PlanAndSolveAgent(config)
 
 
 # ---------- plan parser ----------
@@ -124,9 +126,9 @@ async def test_bad_plan_persists_failure_outcome():
     profile = make_profile()
     memory = fake_memory(profile)
     llm = ScriptedLLM([resp(content="not a plan")])
-    agent = PlanAndSolveAgent(
-        profile,
-        llm=llm,  # type: ignore[arg-type]
+    config = make_test_config(
+        profile=profile,
+        llm=llm,
         memory=memory,
         tools=ToolRegistry(),
         memory_recall_top_k=0,
@@ -134,6 +136,7 @@ async def test_bad_plan_persists_failure_outcome():
         persist_outcome=True,
         reflect_after_run=False,
     )
+    agent = PlanAndSolveAgent(config)
     with pytest.raises(AgentError):
         await agent.run("unparseable")
 
@@ -150,9 +153,9 @@ async def test_bad_plan_failure_skipped_when_persist_outcome_false():
     profile = make_profile()
     memory = fake_memory(profile)
     llm = ScriptedLLM([resp(content="garbage")])
-    agent = PlanAndSolveAgent(
-        profile,
-        llm=llm,  # type: ignore[arg-type]
+    config = make_test_config(
+        profile=profile,
+        llm=llm,
         memory=memory,
         tools=ToolRegistry(),
         memory_recall_top_k=0,
@@ -160,6 +163,7 @@ async def test_bad_plan_failure_skipped_when_persist_outcome_false():
         persist_outcome=False,
         reflect_after_run=False,
     )
+    agent = PlanAndSolveAgent(config)
     with pytest.raises(AgentError):
         await agent.run("q")
     assert len(memory) == 0
@@ -235,9 +239,9 @@ async def test_persist_outcome_stores_final_answer():
             resp(content="final"),
         ]
     )
-    agent = PlanAndSolveAgent(
-        profile,
-        llm=llm,  # type: ignore[arg-type]
+    config = make_test_config(
+        profile=profile,
+        llm=llm,
         memory=memory,
         tools=ToolRegistry(),
         memory_recall_top_k=0,
@@ -245,6 +249,7 @@ async def test_persist_outcome_stores_final_answer():
         persist_outcome=True,
         reflect_after_run=False,
     )
+    agent = PlanAndSolveAgent(config)
     await agent.run("task A")
 
     from tests.DefenseAgent.agent._support import added_calls

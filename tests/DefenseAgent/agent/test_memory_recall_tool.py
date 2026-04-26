@@ -10,6 +10,7 @@ from tests.DefenseAgent.agent._support import (
     ScriptedLLM,
     fake_memory,
     make_profile,
+    make_test_config,
     resp,
 )
 
@@ -20,12 +21,9 @@ from tests.DefenseAgent.agent._support import (
 def test_memory_recall_appears_in_combined_tool_specs():
     profile = make_profile()
     memory = fake_memory(profile)
-    agent = ReActAgent(
-        profile,
-        llm=ScriptedLLM([]),  # type: ignore[arg-type]
-        memory=memory,
-        tools=ToolRegistry(),
-    )
+    agent = ReActAgent(make_test_config(
+        profile=profile, llm=ScriptedLLM([]), memory=memory, tools=ToolRegistry(),
+    ))
     specs = agent._combined_tool_specs()
     assert specs is not None
     names = [s["name"] for s in specs]
@@ -52,12 +50,9 @@ def test_user_tools_appear_before_agent_builtins_in_spec():
         """second"""
         return "2"
 
-    agent = ReActAgent(
-        profile,
-        llm=ScriptedLLM([]),  # type: ignore[arg-type]
-        memory=memory,
-        tools=registry,
-    )
+    agent = ReActAgent(make_test_config(
+        profile=profile, llm=ScriptedLLM([]), memory=memory, tools=registry,
+    ))
     specs = agent._combined_tool_specs()
     assert specs is not None
     assert [s["name"] for s in specs] == ["first", "second", "memory_recall"]
@@ -88,16 +83,11 @@ async def test_llm_can_invoke_memory_recall_and_receive_hits():
             resp(content="She prefers the library."),
         ]
     )
-    agent = ReActAgent(
-        profile,
-        llm=llm,  # type: ignore[arg-type]
-        memory=memory,
-        tools=ToolRegistry(),
-        memory_recall_top_k=0,
-        persist_outcome=False,
-        persist_trajectory=False,
-        reflect_after_run=False,
-    )
+    agent = ReActAgent(make_test_config(
+        profile=profile, llm=llm, memory=memory, tools=ToolRegistry(),
+        memory_recall_top_k=0, persist_outcome=False,
+        persist_trajectory=False, reflect_after_run=False,
+    ))
 
     result = await agent.run("study location?", max_steps=5)
     assert result.final_answer == "She prefers the library."
@@ -126,16 +116,11 @@ async def test_memory_recall_empty_returns_diagnostic_not_crash():
             resp(content="Nothing found, answering from priors."),
         ]
     )
-    agent = ReActAgent(
-        profile,
-        llm=llm,  # type: ignore[arg-type]
-        memory=memory,
-        tools=ToolRegistry(),
-        memory_recall_top_k=0,
-        persist_outcome=False,
-        persist_trajectory=False,
-        reflect_after_run=False,
-    )
+    agent = ReActAgent(make_test_config(
+        profile=profile, llm=llm, memory=memory, tools=ToolRegistry(),
+        memory_recall_top_k=0, persist_outcome=False,
+        persist_trajectory=False, reflect_after_run=False,
+    ))
 
     result = await agent.run("q", max_steps=3)
     tool_result_step = next(s for s in result.steps if s.kind == "tool_result")
@@ -160,16 +145,11 @@ async def test_memory_recall_empty_query_is_handled_gracefully():
             resp(content="done"),
         ]
     )
-    agent = ReActAgent(
-        profile,
-        llm=llm,  # type: ignore[arg-type]
-        memory=memory,
-        tools=ToolRegistry(),
-        memory_recall_top_k=0,
-        persist_outcome=False,
-        persist_trajectory=False,
-        reflect_after_run=False,
-    )
+    agent = ReActAgent(make_test_config(
+        profile=profile, llm=llm, memory=memory, tools=ToolRegistry(),
+        memory_recall_top_k=0, persist_outcome=False,
+        persist_trajectory=False, reflect_after_run=False,
+    ))
     result = await agent.run("q", max_steps=3)
     tool_result_step = next(s for s in result.steps if s.kind == "tool_result")
     assert "empty query" in tool_result_step.tool_results[0].content
@@ -179,12 +159,9 @@ async def test_memory_recall_top_k_is_clamped():
     """top_k is coerced to int and clamped to [1, 20]; extreme values must not crash."""
     profile = make_profile()
     memory = fake_memory(profile)
-    agent = ReActAgent(
-        profile,
-        llm=ScriptedLLM([]),  # type: ignore[arg-type]
-        memory=memory,
-        tools=ToolRegistry(),
-    )
+    agent = ReActAgent(make_test_config(
+        profile=profile, llm=ScriptedLLM([]), memory=memory, tools=ToolRegistry(),
+    ))
 
     # top_k=999 → clamped to 20 internally; handler returns the empty-match diagnostic.
     out = await agent._handle_memory_recall({"query": "anything", "top_k": 999})
@@ -234,16 +211,11 @@ async def test_dispatch_preserves_order_across_user_and_agent_tools():
             resp(content="done"),
         ]
     )
-    agent = ReActAgent(
-        profile,
-        llm=llm,  # type: ignore[arg-type]
-        memory=memory,
-        tools=registry,
-        memory_recall_top_k=0,
-        persist_outcome=False,
-        persist_trajectory=False,
-        reflect_after_run=False,
-    )
+    agent = ReActAgent(make_test_config(
+        profile=profile, llm=llm, memory=memory, tools=registry,
+        memory_recall_top_k=0, persist_outcome=False,
+        persist_trajectory=False, reflect_after_run=False,
+    ))
     result = await agent.run("multi", max_steps=3)
     tool_result_step = next(s for s in result.steps if s.kind == "tool_result")
     names = [m.name for m in tool_result_step.tool_results]

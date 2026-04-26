@@ -155,29 +155,27 @@ class BaseAgent(ABC):
         log_dir: str | Path | None = None,
         dotenv_path: str | None = None,
         load_env: bool = True,
-        **kwargs: Any,
+        **agent_config_kwargs: Any,
     ) -> "BaseAgent":
-        """Build a fully-wired agent from a profile + .env; extra kwargs forward to the subclass `__init__`. RAG is built lazily only when `profile.rag.enabled=True` so agents without a knowledge base avoid the llama-index dependency."""
-        llm = LLM.from_env(dotenv_path=dotenv_path, load_env=load_env)
-        memory = DefaultMemory.from_profile(
-            profile, dotenv_path=dotenv_path, load_env=False,
+        """Build a fully-wired agent from a profile + .env. Equivalent to:
+
+            config = AgentConfig(profile=profile, log_dir=log_dir, ...)
+            agent = cls(config)
+            await agent._ensure_async_setup()    # eager MCP/RAG setup
+
+        Kept as a convenience for the original .env-driven workflow; new code
+        should construct an `AgentConfig` directly. Will be deprecated in v0.2.
+        """
+        config = AgentConfig(
+            profile=profile,
+            log_dir=log_dir,
+            dotenv_path=dotenv_path,
+            load_env=load_env,
+            **agent_config_kwargs,
         )
-        compactor = ContextCompressor(profile, load_env=False)
-        tools = await ToolRegistry.from_profile(profile)
-        reflector = Reflector(memory, llm)
-        logger = _build_logger(profile, log_dir)
-        rag = await _maybe_build_rag(profile, dotenv_path=dotenv_path)
-        return cls(
-            profile,
-            llm=llm,
-            memory=memory,
-            tools=tools,
-            reflector=reflector,
-            logger=logger,
-            compactor=compactor,
-            rag=rag,
-            **kwargs,
-        )
+        agent = cls(config)
+        await agent._ensure_async_setup()
+        return agent
 
     @abstractmethod
     async def run(
@@ -474,35 +472,3 @@ def truncate(text: str, max_len: int) -> str:
     return text[: max_len - 3] + "..."
 
 
-async def _maybe_build_rag(
-    profile: AgentProfile,
-    *,
-    dotenv_path: str | None,
-) -> Any | None:
-    """Build a `LlamaIndexRAG` from the profile when `profile.rag.enabled` is True; returns None otherwise. The import is lazy so agents that don't need RAG are not forced to install llama-index."""
-    if not profile.rag.enabled:
-        return None
-    from DefenseAgent.rag.llama_index_rag import LlamaIndexRAG
-
-    return await LlamaIndexRAG.from_profile(
-        profile, load_env=False, dotenv_path=dotenv_path,
-    )
-
-
-def _build_logger(
-    profile: AgentProfile,
-    log_dir: str | Path | None,
-) -> AgentLogger | None:
-    """Build an AgentLogger at `<log_dir>/<profile.id>.log`; returns None when no log dir can be resolved."""
-    if log_dir is not None:
-        resolved = Path(log_dir)
-    elif profile.source_dir is not None:
-        resolved = profile.source_dir / "logs"
-    else:
-        return None
-    resolved.mkdir(parents=True, exist_ok=True)
-    return AgentLogger.from_profile(
-        profile,
-        stream=None,
-        log_file=resolved / f"{profile.id}.log",
-    )

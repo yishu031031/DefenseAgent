@@ -1,6 +1,4 @@
-from DefenseAgent.llm.base import LLMAdapter
 from DefenseAgent.llm.errors import (
-    LLMAdapterError,
     LLMConfigError,
     LLMError,
     LLMProviderError,
@@ -18,7 +16,6 @@ from DefenseAgent.llm.types import (
 
 __all__ = [
     "LLM",
-    "LLMAdapter",
     "Message",
     "ToolCall",
     "TokenUsage",
@@ -28,6 +25,5 @@ __all__ = [
     "StreamChunk",
     "LLMError",
     "LLMConfigError",
-    "LLMAdapterError",
     "LLMProviderError",
 ]

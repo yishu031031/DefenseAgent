@@ -6,6 +6,14 @@ from DefenseAgent.rag.base import (
     RAGError,
     RAGProviderError,
 )
+from DefenseAgent.rag.extraction import (
+    HtmlExtractor,
+    PyPdfExtractor,
+    StructuredChunk,
+    StructuredDocExtractor,
+    StructuredExtractor,
+    StructuredResource,
+)
 from DefenseAgent.rag.llama_index_rag import LlamaIndexRAG
 
 
@@ -21,4 +29,10 @@ __all__ = [
     "RAGError",
     "RAGConfigError",
     "RAGProviderError",
+    "StructuredChunk",
+    "StructuredResource",
+    "StructuredExtractor",
+    "StructuredDocExtractor",
+    "PyPdfExtractor",
+    "HtmlExtractor",
 ]

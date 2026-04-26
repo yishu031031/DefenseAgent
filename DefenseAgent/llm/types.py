@@ -29,6 +29,8 @@ class TokenUsage:
     prompt_tokens: int
     completion_tokens: int
     total_tokens: int
+    cache_read_tokens: int = 0       # tokens served from cache (billed cheap, ~0.1x)
+    cache_creation_tokens: int = 0   # tokens written into cache (billed expensive, ~1.25x)
 
 
 @dataclass
@@ -39,6 +41,8 @@ class LLMResponse:
     usage: TokenUsage
     stop_reason: str | None
     raw: dict[str, Any]
+    reasoning_content: str = ""   # extended thinking / chain-of-thought (R1, o1, Claude thinking)
+    id: str = ""                   # provider request id — useful for support tickets and log correlation
 
 
 @dataclass
@@ -53,6 +57,8 @@ class StreamEnd:
     stop_reason: str
     usage: TokenUsage
     raw: dict[str, Any]
+    reasoning_content: str = ""   # accumulated reasoning text from the whole stream
+    id: str = ""
 
 
 StreamChunk = TextDelta | StreamEnd

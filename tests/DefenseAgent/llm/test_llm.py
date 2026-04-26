@@ -6,8 +6,6 @@ import pytest
 
 from DefenseAgent.llm import (
     LLM,
-    LLMAdapter,
-    LLMAdapterError,
     LLMConfigError,
     LLMError,
     LLMProviderError,
@@ -20,6 +18,8 @@ from DefenseAgent.llm import (
     ToolCall,
 )
 from DefenseAgent.llm.anthropic import AnthropicAdapter
+from DefenseAgent.llm.base import LLMAdapter
+from DefenseAgent.llm.errors import LLMAdapterError
 from DefenseAgent.llm.openai_compat import OpenAICompatibleAdapter
 
 

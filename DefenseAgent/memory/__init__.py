@@ -1,5 +1,6 @@
 from ms_agent.memory import memory_mapping
 
+from DefenseAgent.memory._bridge import MemoryBackendConfig
 from DefenseAgent.memory.base import (
     Memory,
     MemoryConfigError,
@@ -14,6 +15,7 @@ __all__ = [
     "Memory",
     "DefaultMemory",
     "ContextCompressor",
+    "MemoryBackendConfig",
     "SharedMemoryManager",
     "memory_mapping",
     "MemoryError",
