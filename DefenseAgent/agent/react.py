@@ -1,6 +1,7 @@
 import json
 from typing import Any
 
+from DefenseAgent.agent._builder import build_components_sync
 from DefenseAgent.agent.base import (
     AgentResult,
     AgentStep,
@@ -10,6 +11,7 @@ from DefenseAgent.agent.base import (
     add_usage,
     truncate,
 )
+from DefenseAgent.agent.config import AgentConfig
 from DefenseAgent.config.profile import AgentProfile
 from DefenseAgent.llm.llm import LLM
 from DefenseAgent.llm.types import Message, TokenUsage, ToolCall
@@ -37,15 +39,27 @@ _TRAJECTORY_MEMORY_TYPE = "trajectory"
 
 
 class ReActAgent(BaseAgent):
-    """Yao et al. 2022 — interleaved reasoning + acting. Memory is mem0-backed; trajectories and outcomes get tagged via memory_type for later filtering."""
+    """Yao et al. 2022 — interleaved reasoning + acting. Memory is mem0-backed; trajectories and outcomes get tagged via memory_type for later filtering.
+
+    Two construction shapes are supported:
+
+    1. **`ReActAgent(config)`** — `config` is an `AgentConfig`. Recommended.
+       The agent builds its own LLM, memory, tools, reflector, compactor and
+       logger from the profile + flags. MCP servers and RAG are wired lazily
+       on the first `run()` call (since they need `await`).
+
+    2. **`ReActAgent(profile, llm=..., memory=..., tools=..., ...)`** — pass
+       pre-built components directly. Used by the test suite and any caller
+       that wants to inject custom adapters / mocks.
+    """
 
     def __init__(
         self,
-        profile: AgentProfile,
+        config: AgentConfig | AgentProfile,
         *,
-        llm: LLM,
-        memory: DefaultMemory,
-        tools: ToolRegistry,
+        llm: LLM | None = None,
+        memory: DefaultMemory | None = None,
+        tools: ToolRegistry | None = None,
         reflector: Reflector | None = None,
         logger: AgentLogger | None = None,
         compactor: ContextCompressor | None = None,
@@ -56,9 +70,35 @@ class ReActAgent(BaseAgent):
         reflect_after_run: bool = True,
         extra_instructions: str | None = None,
     ) -> None:
-        """Wire the base modules plus ReAct knobs; trajectory/outcome/failure are distinguished by mem0's memory_type tag."""
+        """Either build everything from `AgentConfig` or accept pre-built components by keyword."""
+        if isinstance(config, AgentConfig):
+            built = build_components_sync(config)
+            super().__init__(
+                built.profile,
+                llm=built.llm,
+                memory=built.memory,
+                tools=built.tools,
+                reflector=built.reflector,
+                logger=built.logger,
+                compactor=built.compactor,
+                rag=None,
+            )
+            self._config = config
+            self.memory_recall_top_k = config.memory_recall_top_k
+            self.persist_outcome = config.persist_outcome and config.use_memory
+            self.persist_trajectory = config.persist_trajectory and config.use_memory
+            self.reflect_after_run = (
+                config.reflect_after_run and config.use_reflection and config.use_memory
+            )
+            self.extra_instructions = config.extra_instructions
+            return
+
+        if llm is None or tools is None:
+            raise TypeError(
+                "ReActAgent legacy constructor requires `llm` and `tools` keyword arguments"
+            )
         super().__init__(
-            profile,
+            config,
             llm=llm,
             memory=memory,
             tools=tools,
@@ -80,6 +120,7 @@ class ReActAgent(BaseAgent):
         max_steps: int | None = None,
     ) -> AgentResult:
         """LLM-call loop: dispatch tool calls (user tools + built-in memory_recall) until a plain-text answer or max_steps. Both success and failure paths persist + reflect."""
+        await self._ensure_async_setup()
         cap = self._resolve_max_steps(max_steps)
         self._log("info", "agent.run.start", "starting ReAct run", task=task, max_steps=cap)
 

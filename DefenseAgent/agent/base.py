@@ -3,6 +3,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Literal
 
+from DefenseAgent.agent.config import AgentConfig
 from DefenseAgent.config.profile import AgentProfile
 from DefenseAgent.llm.llm import LLM
 from DefenseAgent.llm.types import Message, TokenUsage, ToolCall
@@ -112,7 +113,7 @@ class BaseAgent(ABC):
         profile: AgentProfile,
         *,
         llm: LLM,
-        memory: DefaultMemory,
+        memory: DefaultMemory | None,
         tools: ToolRegistry,
         reflector: Reflector | None = None,
         logger: AgentLogger | None = None,
@@ -120,7 +121,7 @@ class BaseAgent(ABC):
         rag: Any | None = None,
         memory_tools: list[MemoryTool] | None = None,
     ) -> None:
-        """Compose the modules; build the per-step memory chain (default order: [memory, compactor], skipping None). When `rag` is provided, the `rag_search` built-in tool is registered alongside `memory_recall`."""
+        """Compose the modules; build the per-step memory chain (default order: [memory, compactor], skipping None). When `rag` is provided, the `rag_search` built-in tool is registered alongside `memory_recall`. `memory=None` runs the agent stateless: no memory_recall tool, no persistence, no condense_memory."""
         self.profile = profile
         self.llm = llm
         self.memory = memory
@@ -132,12 +133,19 @@ class BaseAgent(ABC):
         if memory_tools is not None:
             self.memory_tools = list(memory_tools)
         else:
-            self.memory_tools = [memory] + ([compactor] if compactor is not None else [])
-        self._agent_tools: dict[str, _AgentToolHandler] = {
-            MEMORY_RECALL_TOOL_NAME: self._handle_memory_recall,
-        }
+            chain: list[MemoryTool] = []
+            if memory is not None:
+                chain.append(memory)
+            if compactor is not None:
+                chain.append(compactor)
+            self.memory_tools = chain
+        self._agent_tools: dict[str, _AgentToolHandler] = {}
+        if memory is not None:
+            self._agent_tools[MEMORY_RECALL_TOOL_NAME] = self._handle_memory_recall
         if rag is not None:
             self._agent_tools[RAG_SEARCH_TOOL_NAME] = self._handle_rag_search
+        self._config: AgentConfig | None = None
+        self._async_setup_done: bool = False
 
     @classmethod
     async def from_profile(
@@ -184,6 +192,23 @@ class BaseAgent(ABC):
         """Close underlying MCP clients (mem0 storage is auto-managed)."""
         await self.tools.close()
 
+    async def _ensure_async_setup(self) -> None:
+        """Apply config-driven async wiring (MCP servers + RAG) on the first run().
+
+        Sync construction (`agent = ReActAgent(config)`) cannot await, so MCP
+        servers and `LlamaIndexRAG.from_profile` are deferred to here. No-op
+        when the agent was built via the legacy keyword path or has already
+        been set up.
+        """
+        if self._async_setup_done or self._config is None:
+            return
+        self._async_setup_done = True
+        from DefenseAgent.agent._builder import async_finish_setup
+        rag = await async_finish_setup(self._config, self.profile, self.tools)
+        if rag is not None and self.rag is None:
+            self.rag = rag
+            self._agent_tools[RAG_SEARCH_TOOL_NAME] = self._handle_rag_search
+
     async def __aenter__(self) -> "BaseAgent":
         """Enter: return self so `async with BaseAgent.from_profile(...) as agent:` works cleanly."""
         return self
@@ -193,12 +218,16 @@ class BaseAgent(ABC):
         await self.close()
 
     def _resolve_max_steps(self, override: int | None) -> int:
-        """Pick the caller's override if given, else `profile.cognitive.max_steps_per_cycle`."""
-        return override if override is not None else self.profile.cognitive.max_steps_per_cycle
+        """Pick the caller's override if given, else `config.max_steps`, else `profile.cognitive.max_steps_per_cycle`."""
+        if override is not None:
+            return override
+        if self._config is not None and self._config.max_steps is not None:
+            return self._config.max_steps
+        return self.profile.cognitive.max_steps_per_cycle
 
     async def _recall_memories(self, query: str, top_k: int) -> list[dict[str, Any]]:
-        """Return mem0 records relevant to `query`, capped at `top_k`; returns [] when top_k<=0 or memory raises."""
-        if top_k <= 0:
+        """Return mem0 records relevant to `query`, capped at `top_k`; returns [] when memory is disabled, top_k<=0, or memory raises."""
+        if self.memory is None or top_k <= 0:
             return []
         try:
             return self.memory.search_records(query, limit=top_k)
@@ -282,7 +311,9 @@ class BaseAgent(ABC):
         *,
         memory_type: str = _OUTCOME_MEMORY_TYPE,
     ) -> None:
-        """Append the Q→A pair to mem0 tagged with `memory_type` (default='outcome', failures override to 'failure')."""
+        """Append the Q→A pair to mem0 tagged with `memory_type` (default='outcome', failures override to 'failure'). No-op when memory is disabled."""
+        if self.memory is None:
+            return
         message = Message(role="user", content=f"Q: {task}\nA: {answer}")
         try:
             await self.memory.add([message], memory_type=memory_type)
@@ -341,6 +372,9 @@ class BaseAgent(ABC):
 
     async def _handle_memory_recall(self, arguments: dict[str, Any]) -> str:
         """Agent-owned handler for the `memory_recall` tool; renders mem0 hits as a bullet list or a diagnostic string."""
+        if self.memory is None:
+            return "(memory_recall unavailable: memory subsystem disabled)"
+
         raw_query = arguments.get("query", "")
         query = raw_query.strip() if isinstance(raw_query, str) else ""
         if not query:

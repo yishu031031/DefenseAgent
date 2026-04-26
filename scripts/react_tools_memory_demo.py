@@ -60,12 +60,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 for _name in ("mem0.utils.spacy_models", "mem0.utils.factory", "mem0.memory.main"):
     logging.getLogger(_name).setLevel(logging.ERROR)
 
-from DefenseAgent.agent import ReActAgent
+from DefenseAgent import AgentConfig, ReActAgent
 from DefenseAgent.config import AgentProfile
-from DefenseAgent.llm.llm import LLM
-from DefenseAgent.memory import ContextCompressor, DefaultMemory
-from DefenseAgent.reflection import Reflector
-from DefenseAgent.tools import ToolRegistry
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -238,28 +234,17 @@ async def main() -> int:
         memory_dir = tmp_root / "memory"
         print(f"[demo] using fresh memory dir: {memory_dir}")
 
-    _banner("Build the agent (LLM + DefaultMemory + ToolRegistry + Reflector)")
-    llm = LLM.from_env(load_env=False)
-    memory = DefaultMemory(
-        profile, storage_path=memory_dir, load_env=False,
+    _banner("Build the agent (one AgentConfig → ReActAgent(config))")
+    config = AgentConfig(
+        profile=profile,
+        load_env=False,             # we already loaded .env above
+        tools=[calculator, web_search],
+        storage_path=memory_dir,
+        reflect_after_run=False,    # keep the demo cheap; no extra LLM call after each turn
     )
-    compactor = ContextCompressor(profile, load_env=False)
-    reflector = Reflector(memory, llm)
-    tools = ToolRegistry()
-    tools.tool(calculator)
-    tools.tool(web_search)
-    print(f"adapter: {type(llm.adapter).__name__} (model={llm.adapter.model})")
-    print(f"tools  : {tools.names()}  (+ memory_recall via BaseAgent)")
-
-    async with ReActAgent(
-        profile,
-        llm=llm,
-        memory=memory,
-        tools=tools,
-        reflector=reflector,
-        compactor=compactor,
-        reflect_after_run=False,  # keep the demo cheap; no extra LLM call after each turn
-    ) as agent:
+    async with ReActAgent(config) as agent:
+        print(f"adapter: {type(agent.llm.adapter).__name__} (model={agent.llm.adapter.model})")
+        print(f"tools  : {agent.tools.names()}  (+ memory_recall via BaseAgent)")
         _banner("Turn 1 — chained calculator calls (intermediate values feed the next)")
         await _run_turn(
             agent, 1,

@@ -24,11 +24,12 @@ class ContextCompressor(MsContextCompressor):
         *,
         load_env: bool = True,
         dotenv_path: str | None = None,
+        storage_path: str | None = None,
     ) -> None:
-        """Build the ms-agent DictConfig from `profile`, then defer to ms_agent.ContextCompressor's `__init__`."""
+        """Build the ms-agent DictConfig from `profile`, then defer to ms_agent.ContextCompressor's `__init__`. `storage_path` is forwarded to `profile_to_dictconfig` so in-memory profiles (no `source_dir`) can opt in by passing it explicitly."""
         if load_env:
             load_dotenv(dotenv_path, override=False)
-        config = profile_to_dictconfig(profile)
+        config = profile_to_dictconfig(profile, storage_path=storage_path)
         super().__init__(config)
         self.profile = profile
 

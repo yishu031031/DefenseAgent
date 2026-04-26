@@ -1,11 +1,13 @@
 from typing import Any
 
+from DefenseAgent.agent._builder import build_components_sync
 from DefenseAgent.agent.base import (
     AgentResult,
     AgentStep,
     BaseAgent,
     FAILURE_MEMORY_TYPE,
 )
+from DefenseAgent.agent.config import AgentConfig
 from DefenseAgent.config.profile import AgentProfile
 from DefenseAgent.llm.llm import LLM
 from DefenseAgent.llm.types import Message
@@ -16,15 +18,22 @@ from DefenseAgent.tools import ToolRegistry
 
 
 class SimpleAgent(BaseAgent):
-    """Single-turn agent — one LLM call per `run()`, no tool loop. Persona, memory condensation, outcome persistence and post-run reflection still apply."""
+    """Single-turn agent — one LLM call per `run()`, no tool loop. Persona, memory condensation, outcome persistence and post-run reflection still apply.
+
+    Construction shapes mirror `ReActAgent`:
+
+    1. `SimpleAgent(config)` where `config` is an `AgentConfig`.
+    2. `SimpleAgent(profile, llm=..., memory=..., tools=...)` for the legacy
+       keyword path.
+    """
 
     def __init__(
         self,
-        profile: AgentProfile,
+        config: AgentConfig | AgentProfile,
         *,
-        llm: LLM,
-        memory: DefaultMemory,
-        tools: ToolRegistry,
+        llm: LLM | None = None,
+        memory: DefaultMemory | None = None,
+        tools: ToolRegistry | None = None,
         reflector: Reflector | None = None,
         logger: AgentLogger | None = None,
         compactor: ContextCompressor | None = None,
@@ -33,9 +42,33 @@ class SimpleAgent(BaseAgent):
         reflect_after_run: bool = True,
         extra_instructions: str | None = None,
     ) -> None:
-        """Wire the base modules; SimpleAgent ignores tools at the LLM call site (kept on the registry for memory_recall/rag_search and uniformity with other agents)."""
+        """Either build everything from `AgentConfig` or accept pre-built components by keyword."""
+        if isinstance(config, AgentConfig):
+            built = build_components_sync(config)
+            super().__init__(
+                built.profile,
+                llm=built.llm,
+                memory=built.memory,
+                tools=built.tools,
+                reflector=built.reflector,
+                logger=built.logger,
+                compactor=built.compactor,
+                rag=None,
+            )
+            self._config = config
+            self.persist_outcome = config.persist_outcome and config.use_memory
+            self.reflect_after_run = (
+                config.reflect_after_run and config.use_reflection and config.use_memory
+            )
+            self.extra_instructions = config.extra_instructions
+            return
+
+        if llm is None or tools is None:
+            raise TypeError(
+                "SimpleAgent legacy constructor requires `llm` and `tools` keyword arguments"
+            )
         super().__init__(
-            profile,
+            config,
             llm=llm,
             memory=memory,
             tools=tools,
@@ -55,6 +88,7 @@ class SimpleAgent(BaseAgent):
         max_steps: int | None = None,
     ) -> AgentResult:
         """One LLM turn: condense memory → chat → record the answer; never raises AgentStepLimitError because there is no loop. `max_steps` is accepted for interface uniformity but ignored."""
+        await self._ensure_async_setup()
         self._log("info", "agent.run.start", "starting Simple run", task=task)
 
         system_prompt = self._build_system_prompt()

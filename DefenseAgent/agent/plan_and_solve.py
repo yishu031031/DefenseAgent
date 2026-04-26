@@ -1,6 +1,7 @@
 import re
 from typing import Any
 
+from DefenseAgent.agent._builder import build_components_sync
 from DefenseAgent.agent.base import (
     AgentError,
     AgentResult,
@@ -10,6 +11,7 @@ from DefenseAgent.agent.base import (
     add_usage,
     truncate,
 )
+from DefenseAgent.agent.config import AgentConfig
 from DefenseAgent.config.profile import AgentProfile
 from DefenseAgent.llm.llm import LLM
 from DefenseAgent.llm.types import Message, TokenUsage
@@ -49,15 +51,22 @@ _STEP_LINE_RE = re.compile(r"^\s*\d+[\.)]\s*(.+?)\s*$")
 
 
 class PlanAndSolveAgent(BaseAgent):
-    """Wang et al. 2023 — plan the task into discrete steps, execute each with tools, then synthesize the final answer."""
+    """Wang et al. 2023 — plan the task into discrete steps, execute each with tools, then synthesize the final answer.
+
+    Construction shapes mirror `ReActAgent`:
+
+    1. `PlanAndSolveAgent(config)` where `config` is an `AgentConfig`.
+    2. `PlanAndSolveAgent(profile, llm=..., memory=..., tools=...)` — legacy
+       keyword path.
+    """
 
     def __init__(
         self,
-        profile: AgentProfile,
+        config: AgentConfig | AgentProfile,
         *,
-        llm: LLM,
-        memory: DefaultMemory,
-        tools: ToolRegistry,
+        llm: LLM | None = None,
+        memory: DefaultMemory | None = None,
+        tools: ToolRegistry | None = None,
         reflector: Reflector | None = None,
         logger: AgentLogger | None = None,
         compactor: ContextCompressor | None = None,
@@ -67,9 +76,34 @@ class PlanAndSolveAgent(BaseAgent):
         persist_outcome: bool = True,
         reflect_after_run: bool = True,
     ) -> None:
-        """Wire the base modules and Plan-and-Solve knobs (recall size, per-step tool-call budget)."""
+        """Either build everything from `AgentConfig` or accept pre-built components by keyword."""
+        if isinstance(config, AgentConfig):
+            built = build_components_sync(config)
+            super().__init__(
+                built.profile,
+                llm=built.llm,
+                memory=built.memory,
+                tools=built.tools,
+                reflector=built.reflector,
+                logger=built.logger,
+                compactor=built.compactor,
+                rag=None,
+            )
+            self._config = config
+            self.memory_recall_top_k = config.memory_recall_top_k
+            self.max_substeps_per_step = config.max_substeps_per_step
+            self.persist_outcome = config.persist_outcome and config.use_memory
+            self.reflect_after_run = (
+                config.reflect_after_run and config.use_reflection and config.use_memory
+            )
+            return
+
+        if llm is None or tools is None:
+            raise TypeError(
+                "PlanAndSolveAgent legacy constructor requires `llm` and `tools` keyword arguments"
+            )
         super().__init__(
-            profile,
+            config,
             llm=llm,
             memory=memory,
             tools=tools,
@@ -90,6 +124,7 @@ class PlanAndSolveAgent(BaseAgent):
         max_steps: int | None = None,
     ) -> AgentResult:
         """Three phases: (1) plan, (2) execute each step with a short tool loop, (3) synthesize. Reflection fires on every exit path via finally."""
+        await self._ensure_async_setup()
         cap = self._resolve_max_steps(max_steps)
         self._log(
             "info", "agent.run.start", "starting Plan-and-Solve run",
