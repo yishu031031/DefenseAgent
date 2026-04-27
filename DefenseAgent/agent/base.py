@@ -1,3 +1,4 @@
+import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -22,6 +23,7 @@ _AgentToolHandler = Callable[[dict[str, Any]], Awaitable[str]]
 
 MEMORY_RECALL_TOOL_NAME = "memory_recall"
 RAG_SEARCH_TOOL_NAME = "rag_search"
+RAG_GET_RESOURCE_TOOL_NAME = "rag_get_resource"
 
 _MEMORY_RECALL_TOOL_SPEC: dict[str, Any] = {
     "name": MEMORY_RECALL_TOOL_NAME,
@@ -54,7 +56,11 @@ _RAG_SEARCH_TOOL_SPEC: dict[str, Any] = {
         "manuals, character lore, world docs) for passages relevant to a "
         "query. Distinct from `memory_recall` which searches dynamic "
         "experiential memory. Use this when you need facts grounded in "
-        "documents you've been given."
+        "documents you've been given.\n\n"
+        "Hits may include inline `<resource_info>RID</resource_info>` markers "
+        "and a follow-up `• resource [RID] (kind) \"caption\"` listing for "
+        "embedded images / tables. Pass an RID to `rag_get_resource` to "
+        "fetch the full content of one resource."
     ),
     "input_schema": {
         "type": "object",
@@ -71,6 +77,34 @@ _RAG_SEARCH_TOOL_SPEC: dict[str, Any] = {
         "required": ["query"],
     },
 }
+
+_RAG_GET_RESOURCE_TOOL_SPEC: dict[str, Any] = {
+    "name": RAG_GET_RESOURCE_TOOL_NAME,
+    "description": (
+        "Fetch the full content of a resource (image / table / custom kind) "
+        "referenced in a previous `rag_search` hit. Pass the resource_id "
+        "from a `<resource_info>RID</resource_info>` marker or the "
+        "`• resource [RID]` listing.\n\n"
+        "Returns a renderer-formatted string. Built-in renderers cover:\n"
+        "  - tables: full markdown content (no truncation)\n"
+        "  - images: file path + mime + size (host application is "
+        "    responsible for displaying / passing to a vision model)\n"
+        "Custom kinds use whatever renderer the SDK caller registered."
+    ),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "resource_id": {
+                "type": "string",
+                "description": "The ID inside a <resource_info>...</resource_info> marker.",
+            },
+        },
+        "required": ["resource_id"],
+    },
+}
+
+
+_RESOURCE_INFO_RE = re.compile(r"<resource_info>[^<]+</resource_info>")
 
 _OUTCOME_MEMORY_TYPE = "outcome"
 FAILURE_MEMORY_TYPE = "failure"
@@ -143,9 +177,14 @@ class BaseAgent(ABC):
         if memory is not None:
             self._agent_tools[MEMORY_RECALL_TOOL_NAME] = self._handle_memory_recall
         if rag is not None:
-            self._agent_tools[RAG_SEARCH_TOOL_NAME] = self._handle_rag_search
+            self._register_rag_tools()
         self._config: AgentConfig | None = None
         self._async_setup_done: bool = False
+
+    def _register_rag_tools(self) -> None:
+        """Register both rag_search and rag_get_resource handlers; called from __init__ and _ensure_async_setup."""
+        self._agent_tools[RAG_SEARCH_TOOL_NAME] = self._handle_rag_search
+        self._agent_tools[RAG_GET_RESOURCE_TOOL_NAME] = self._handle_rag_get_resource
 
     @classmethod
     async def from_profile(
@@ -205,7 +244,7 @@ class BaseAgent(ABC):
         rag = await async_finish_setup(self._config, self.profile, self.tools)
         if rag is not None and self.rag is None:
             self.rag = rag
-            self._agent_tools[RAG_SEARCH_TOOL_NAME] = self._handle_rag_search
+            self._register_rag_tools()
 
     async def __aenter__(self) -> "BaseAgent":
         """Enter: return self so `async with BaseAgent.from_profile(...) as agent:` works cleanly."""
@@ -334,6 +373,8 @@ class BaseAgent(ABC):
             builtin_specs.append(_MEMORY_RECALL_TOOL_SPEC)
         if RAG_SEARCH_TOOL_NAME in self._agent_tools:
             builtin_specs.append(_RAG_SEARCH_TOOL_SPEC)
+        if RAG_GET_RESOURCE_TOOL_NAME in self._agent_tools:
+            builtin_specs.append(_RAG_GET_RESOURCE_TOOL_SPEC)
         combined = user_specs + builtin_specs
         return combined or None
 
@@ -397,7 +438,12 @@ class BaseAgent(ABC):
         )
 
     async def _handle_rag_search(self, arguments: dict[str, Any]) -> str:
-        """Agent-owned handler for the `rag_search` tool; renders RAG passages as a bullet list with score, or a diagnostic string."""
+        """Agent-owned handler for the `rag_search` tool; renders RAG passages + per-hit resource list, or a diagnostic string.
+
+        Per-hit rendering is delegated to `_format_rag_hit`, which subclasses
+        can override to customize the LLM-facing output without touching the
+        retrieval / validation logic here.
+        """
         if self.rag is None:
             return "(rag_search unavailable: no RAG backend configured)"
 
@@ -422,10 +468,47 @@ class BaseAgent(ABC):
             return f"(rag_search failed: {type(e).__name__}: {e})"
         if not hits:
             return f"(no documents matched query={query!r})"
-        return "\n".join(
-            f"- [score={float(h.get('score', 0.0)):.2f}] {truncate(h.get('text', ''), 300)}"
-            for h in hits
-        )
+        return "\n".join(self._format_rag_hit(h) for h in hits)
+
+    def _format_rag_hit(self, hit: dict[str, Any]) -> str:
+        """Render one RAG hit (text + resource manifest) for the LLM.
+
+        Default format:
+            - [score=0.91] <truncated text with <resource_info> markers preserved>
+              • resource [RID] (kind) "caption"
+              • resource [RID] (kind)
+              ...
+
+        Override in a `BaseAgent` subclass to customize the format; the
+        retrieval + validation logic in `_handle_rag_search` stays untouched.
+        """
+        score = float(hit.get("score", 0.0))
+        text = hit.get("text", "")
+        truncated = truncate_preserving_markers(text, 500)
+        lines = [f"- [score={score:.2f}] {truncated}"]
+        meta = hit.get("metadata") or {}
+        rids = meta.get("resource_ids") or []
+        kinds = meta.get("resource_kinds") or []
+        captions = meta.get("resource_captions") or []
+        for i, rid in enumerate(rids):
+            kind = kinds[i] if i < len(kinds) else "?"
+            caption = captions[i] if i < len(captions) else ""
+            cap_part = f' "{caption}"' if caption else ""
+            lines.append(f"  • resource [{rid}] ({kind}){cap_part}")
+        return "\n".join(lines)
+
+    async def _handle_rag_get_resource(self, arguments: dict[str, Any]) -> str:
+        """Agent-owned handler for `rag_get_resource`. Thin shell — actual rendering lives in `LlamaIndexRAG.render_resource()` (which dispatches to the registered ResourceRenderer for the resource's kind)."""
+        if self.rag is None:
+            return "(rag_get_resource unavailable: no RAG backend configured)"
+        raw_rid = arguments.get("resource_id", "")
+        rid = raw_rid.strip() if isinstance(raw_rid, str) else ""
+        if not rid:
+            return "(rag_get_resource called with empty resource_id)"
+        try:
+            return await self.rag.render_resource(rid)
+        except Exception as e:  # noqa: BLE001 - diagnostic for the LLM
+            return f"(rag_get_resource failed: {type(e).__name__}: {e})"
 
     async def _condense_memory(self, messages: list[Message]) -> list[Message]:
         """Pipeline `messages` through every memory tool in order — same shape as ms-agent's LLMAgent.condense_memory; injection + compaction live in this single hop."""
@@ -470,5 +553,26 @@ def truncate(text: str, max_len: int) -> str:
     if len(text) <= max_len:
         return text
     return text[: max_len - 3] + "..."
+
+
+def truncate_preserving_markers(text: str, max_len: int) -> str:
+    """Truncate but never split a `<resource_info>...</resource_info>` marker mid-token.
+
+    Finds the last complete marker that ends within `max_len` and truncates
+    just after it. Falls back to `truncate(text, max_len)` when no markers fit
+    inside the budget. Used by `_format_rag_hit` so the LLM always sees
+    well-formed resource references.
+    """
+    if len(text) <= max_len:
+        return text
+    last_safe_end = 0
+    for m in _RESOURCE_INFO_RE.finditer(text):
+        if m.end() <= max_len:
+            last_safe_end = m.end()
+        else:
+            break
+    if last_safe_end > 0:
+        return text[:last_safe_end] + ("..." if last_safe_end < len(text) else "")
+    return truncate(text, max_len)
 
 

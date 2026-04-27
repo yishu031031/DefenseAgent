@@ -15,6 +15,12 @@ from DefenseAgent.rag.extraction import (
     StructuredResource,
 )
 from DefenseAgent.rag.llama_index_rag import LlamaIndexRAG
+from DefenseAgent.rag.renderer import (
+    ImageRenderer,
+    ResourceRenderer,
+    TableRenderer,
+    default_renderers,
+)
 
 
 # Override ms-agent's LlamaIndexRAG entry with our profile-aware subclass so
@@ -35,4 +41,8 @@ __all__ = [
     "StructuredDocExtractor",
     "PyPdfExtractor",
     "HtmlExtractor",
+    "ResourceRenderer",
+    "TableRenderer",
+    "ImageRenderer",
+    "default_renderers",
 ]

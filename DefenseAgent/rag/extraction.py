@@ -18,7 +18,7 @@ import io
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Literal, Mapping, Protocol, runtime_checkable
+from typing import Any, Mapping, Protocol, runtime_checkable
 
 from DefenseAgent.config.profile import AgentProfile
 from DefenseAgent.rag.base import RAGConfigError
@@ -31,18 +31,31 @@ logger = logging.getLogger(__name__)
 
 @dataclass(frozen=True, slots=True)
 class StructuredResource:
-    """A persisted non-text payload (image / table) attached to a chunk.
+    """A persisted non-text payload (image / table / etc.) attached to a chunk.
 
     `id` follows ms-agent's `<source>@<hash>@<ref>` pattern so the same input
     file always resolves to the same resource ids across runs.
+
+    `kind` is an open string, not a closed enum: built-in extractors emit
+    `"image"` and `"table"`, but SDK callers can register custom kinds
+    (`"csv"`, `"audio"`, `"chart"`, ...) along with matching renderers via
+    `LlamaIndexRAG.register_renderer()`.
+
+    `extra` is an open dict for extractor-specific or downstream-renderer
+    metadata that doesn't fit the canonical fields (e.g. an audio extractor
+    might stash `{"duration_sec": 12.5}`, an OCR extractor might add
+    `{"confidence": 0.89}`). The agent layer never reads it; it's a contract
+    between the extractor that produced the resource and the renderer that
+    consumes it.
     """
 
     id: str
-    kind: Literal["image", "table"]
+    kind: str
     path: Path
     caption: str = ""
     mime_type: str = ""
     metadata: Mapping[str, Any] = field(default_factory=dict)
+    extra: Mapping[str, Any] = field(default_factory=dict)
 
 
 @dataclass(slots=True)
@@ -376,10 +389,37 @@ class StructuredDocExtractor:
         )
         self._backends: list[StructuredExtractor] = backends
 
-    def extract(self, sources: list[str | Path]) -> list[StructuredChunk]:
-        """Process every source; failures on individual sources are logged and skipped."""
+    def register(self, backend: StructuredExtractor, *, prepend: bool = True) -> None:
+        """Register a custom backend at runtime.
+
+        `prepend=True` (default) puts the new backend ahead of the built-ins
+        so it wins on overlapping `supports()` checks (the typical override
+        case). Set `prepend=False` to register a fallback that only runs when
+        no built-in claims the file.
+        """
+        if prepend:
+            self._backends.insert(0, backend)
+        else:
+            self._backends.append(backend)
+
+    def supports(self, source: str | Path) -> bool:
+        """Return True iff at least one registered backend can handle `source`."""
+        return self._pick_backend(source) is not None
+
+    def extract(self, sources: "str | Path | list[str | Path]") -> list[StructuredChunk]:
+        """Process one source or a list of sources; failures on individual sources are logged and skipped.
+
+        Accepts either a single path (returns chunks for that one file) or a
+        list of paths (returns chunks merged across all files), so callers can
+        mirror either the per-file backend protocol or the batch facade in the
+        same call.
+        """
+        if isinstance(sources, (str, Path)):
+            sources_iter: list[str | Path] = [sources]
+        else:
+            sources_iter = list(sources)
         all_chunks: list[StructuredChunk] = []
-        for source in sources:
+        for source in sources_iter:
             backend = self._pick_backend(source)
             if backend is None:
                 logger.warning("no backend supports source: %s", source)

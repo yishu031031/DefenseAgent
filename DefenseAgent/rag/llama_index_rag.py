@@ -8,19 +8,27 @@ from ms_agent.rag.llama_index_rag import LlamaIndexRAG as MsLlamaIndexRAG
 from DefenseAgent.config.profile import AgentProfile
 from DefenseAgent.rag._bridge import profile_to_rag_dictconfig
 from DefenseAgent.rag.base import RAGConfigError
+from DefenseAgent.rag.extraction import StructuredDocExtractor, StructuredResource
+from DefenseAgent.rag.renderer import ResourceRenderer, default_renderers
 
 if TYPE_CHECKING:
     from DefenseAgent.rag.extraction import StructuredChunk
 
 
-_DEFAULT_DOC_GLOBS: tuple[str, ...] = ("*.md", "*.txt", "*.rst", "*.pdf")
+_DEFAULT_DOC_GLOBS: tuple[str, ...] = (
+    "*.md", "*.txt", "*.rst", "*.pdf", "*.html", "*.htm",
+)
 
 
 class LlamaIndexRAG(MsLlamaIndexRAG):
-    """Inherits ms-agent's `LlamaIndexRAG`; takes our AgentProfile and converts to DictConfig at construction.
+    """Inherits ms-agent's `LlamaIndexRAG`; adds profile-driven config, structured ingest, and a pluggable renderer registry.
 
-    Adds `from_profile()` which auto-loads the persisted index from `profile.rag.storage_dir`
-    if present, else builds a fresh index from `profile.rag.documents_dir` and persists it.
+    Adds:
+      - `from_profile()` — auto-load persisted index or ingest documents on miss
+      - `register_renderer()` — install a custom resource renderer at runtime
+      - `render_resource(rid)` — fetch + format a resource for LLM consumption
+      - `get_resource_kind() / get_resource_caption() / get_resource_mime()`
+      - `extractor=` injection in the constructor for custom format support
     """
 
     def __init__(
@@ -31,8 +39,20 @@ class LlamaIndexRAG(MsLlamaIndexRAG):
         documents_path: str | Path | None = None,
         load_env: bool = True,
         dotenv_path: str | None = None,
+        extractor: StructuredDocExtractor | None = None,
+        renderers: dict[str, ResourceRenderer] | None = None,
     ) -> None:
-        """Build the ms-agent DictConfig from `profile` + .env, ensure the storage dir exists, then defer to ms-agent's `__init__` (which loads the embedding model)."""
+        """Build the ms-agent DictConfig from `profile` + .env, ensure the storage dir exists, then defer to ms-agent's `__init__` (which loads the embedding model).
+
+        `extractor` lets SDK callers plug in a `StructuredDocExtractor` configured
+        with custom backends (e.g. a docx parser). When omitted, a default
+        extractor with the built-in PDF + HTML backends is created lazily on
+        the first `_auto_load()` call.
+
+        `renderers` overrides the built-in renderer set at construction time.
+        Most callers should leave this `None` and call `register_renderer()`
+        to layer their own renderers on top of the defaults.
+        """
         if load_env:
             load_dotenv(dotenv_path, override=False)
         config = profile_to_rag_dictconfig(
@@ -48,6 +68,10 @@ class LlamaIndexRAG(MsLlamaIndexRAG):
             if "documents_dir" in config
             else None
         )
+        self._extractor: StructuredDocExtractor | None = extractor
+        self._renderers: dict[str, ResourceRenderer] = (
+            dict(renderers) if renderers is not None else default_renderers()
+        )
 
     @classmethod
     async def from_profile(
@@ -59,6 +83,8 @@ class LlamaIndexRAG(MsLlamaIndexRAG):
         load_env: bool = True,
         dotenv_path: str | None = None,
         auto_load: bool = True,
+        extractor: StructuredDocExtractor | None = None,
+        renderers: dict[str, ResourceRenderer] | None = None,
     ) -> "LlamaIndexRAG":
         """Convenience constructor that mirrors the rest of DefenseAgent. When `auto_load=True` (default), tries `load_index()` first and falls back to ingesting every file under the configured documents directory, then persists the index."""
         instance = cls(
@@ -67,13 +93,64 @@ class LlamaIndexRAG(MsLlamaIndexRAG):
             documents_path=documents_path,
             load_env=load_env,
             dotenv_path=dotenv_path,
+            extractor=extractor,
+            renderers=renderers,
         )
         if auto_load:
             await instance._auto_load()
         return instance
 
+    # ---- renderer registry ----
+
+    def register_renderer(self, renderer: ResourceRenderer) -> None:
+        """Register or override a `ResourceRenderer` keyed by `renderer.kind`.
+
+        Built-in kinds (`"image"`, `"table"`) can be overridden by passing a
+        renderer with the same `kind`. SDK callers add new kinds (`"csv"`,
+        `"audio"`, ...) by registering a renderer that declares that kind.
+        """
+        self._renderers[renderer.kind] = renderer
+
+    async def render_resource(self, resource_id: str) -> str:
+        """Fetch a resource by id and render it via the registered renderer.
+
+        Returns a diagnostic string when the id is unknown or no renderer
+        matches — never raises, so the agent layer can hand the result
+        straight to the LLM.
+        """
+        path = self.get_resource_path(resource_id)
+        if path is None:
+            return f"(no resource found with id={resource_id!r})"
+        kind = self.get_resource_kind(resource_id) or "unknown"
+        renderer = self._renderers.get(kind)
+        if renderer is None:
+            caption = self.get_resource_caption(resource_id) or ""
+            cap = f' "{caption}"' if caption else ""
+            return f"resource [{resource_id}]{cap} (kind={kind!r}) at {path}"
+        resource = StructuredResource(
+            id=resource_id,
+            kind=kind,
+            path=path,
+            caption=self.get_resource_caption(resource_id) or "",
+            mime_type=self.get_resource_mime(resource_id) or "",
+        )
+        try:
+            return await renderer.render(resource)
+        except Exception as e:  # noqa: BLE001 - diagnostic for the LLM
+            return (
+                f"(renderer for kind={kind!r} failed on {resource_id!r}: "
+                f"{type(e).__name__}: {e})"
+            )
+
+    # ---- ingestion ----
+
     async def _auto_load(self) -> None:
-        """Try `load_index()`; on miss, ingest every document under `_documents_dir` and persist."""
+        """Try `load_index()`; on miss, ingest the documents dir using the structured pipeline.
+
+        Files claimed by `self.extractor.supports()` go through structured
+        extraction (preserves images / tables); everything else falls back to
+        the plain-text path. Both feed the same vector index.
+        """
         try:
             await self.load_index()
             return
@@ -84,55 +161,164 @@ class LlamaIndexRAG(MsLlamaIndexRAG):
         files = _collect_document_files(self._documents_dir)
         if not files:
             return
-        await self.add_documents_from_files([str(f) for f in files])
-        await self.save_index()
+
+        extractor = self._ensure_extractor()
+        structured_files: list[Path] = []
+        plain_files: list[Path] = []
+        for f in files:
+            try:
+                if extractor.supports(f):
+                    structured_files.append(f)
+                else:
+                    plain_files.append(f)
+            except Exception:  # noqa: BLE001 - extractor probe shouldn't crash auto-load
+                plain_files.append(f)
+
+        if structured_files:
+            chunks = extractor.extract(structured_files)
+            if chunks:
+                await self.add_structured_chunks(chunks)
+
+        if plain_files:
+            await self.add_documents_from_files([str(f) for f in plain_files])
+
+        if structured_files or plain_files:
+            await self.save_index()
+
+    def _ensure_extractor(self) -> StructuredDocExtractor:
+        """Build the default StructuredDocExtractor on demand if one wasn't injected."""
+        if self._extractor is None:
+            resources_dir = Path(self.storage_dir) / "resources"
+            self._extractor = StructuredDocExtractor(
+                self.profile, resources_dir=resources_dir,
+            )
+        return self._extractor
 
     async def add_structured_chunks(self, chunks: "list[StructuredChunk]") -> None:
         """Ingest pre-extracted structured chunks into the vector index.
 
-        Each chunk's resource ids and on-disk paths are stored in node metadata
-        so that callers can map a retrieved chunk back to its associated images
-        / tables via `get_resource_path()`. Paths that fall under
-        `self.storage_dir` are persisted as POSIX-style **relative** paths so the
-        index remains portable across machines / OSes; paths outside that root
-        are persisted as absolute strings as a safety fallback.
+        Each chunk's resource ids, paths, kinds, captions, and mime types are
+        stored in node metadata so callers can map a retrieved chunk back to
+        its associated images / tables / etc. via `get_resource_path()` and
+        friends. Paths under `self.storage_dir` are persisted as POSIX-style
+        relative strings so the index remains portable across machines.
+
+        Idempotent on the index level: when called repeatedly, new chunks are
+        appended to an existing index rather than replacing it.
         """
         if not chunks:
             return
-        from llama_index.core import Document, VectorStoreIndex
+        from llama_index.core import Document
         documents = [
             Document(
                 text=c.text,
                 metadata={
                     **c.metadata,
-                    "resource_ids": [r.id for r in c.resources],
-                    "resource_paths": [self._serialize_resource_path(r.path) for r in c.resources],
-                    "resource_kinds": [r.kind for r in c.resources],
+                    "resource_ids":      [r.id for r in c.resources],
+                    "resource_paths":    [self._serialize_resource_path(r.path) for r in c.resources],
+                    "resource_kinds":    [r.kind for r in c.resources],
+                    "resource_captions": [r.caption for r in c.resources],
+                    "resource_mimes":    [r.mime_type for r in c.resources],
                 },
             )
             for c in chunks
         ]
-        self.index = VectorStoreIndex.from_documents(documents)
+        await self._add_documents_additive(documents)
+
+    async def add_documents(self, documents: list[str]) -> None:
+        """Override ms-agent's `add_documents` to be additive instead of replacing.
+
+        ms-agent's base implementation does `self.index = VectorStoreIndex.from_documents(...)`,
+        which silently wipes any previously-ingested chunks. We want repeated
+        calls to accumulate so a single agent can mix structured chunks +
+        plain-text documents in any order.
+        """
+        if not documents:
+            raise ValueError("Document list cannot be empty")
+        from llama_index.core import Document
+        docs = [Document(text=d) for d in documents]
+        await self._add_documents_additive(docs)
+
+    async def add_documents_from_files(self, file_paths: list[str]) -> None:
+        """Override ms-agent's `add_documents_from_files` to be additive (see add_documents)."""
+        if not file_paths:
+            raise ValueError("File path list cannot be empty")
+        import os
+        from llama_index.core.readers import SimpleDirectoryReader
+        documents = []
+        for file_path in file_paths:
+            if not os.path.exists(file_path):
+                raise ValueError(f"File {file_path} does not exist")
+            if os.path.isfile(file_path):
+                reader = SimpleDirectoryReader(input_files=[file_path])
+            else:
+                reader = SimpleDirectoryReader(input_dir=file_path)
+            documents.extend(reader.load_data())
+        await self._add_documents_additive(documents)
+
+    async def _add_documents_additive(self, documents: list[Any]) -> None:
+        """Append `documents` to `self.index`; create the index on the first call.
+
+        Shared bottom-half for `add_documents`, `add_documents_from_files`, and
+        `add_structured_chunks` — keeps the "build vs append" decision in one
+        place so repeated ingest calls never silently clobber earlier chunks.
+        """
+        if not documents:
+            return
+        from llama_index.core import VectorStoreIndex
+        if self.index is None:
+            self.index = VectorStoreIndex.from_documents(documents)
+        else:
+            for doc in documents:
+                self.index.insert(doc)
         if not self.retrieve_only:
             await self._setup_query_engine()
+
+    # ---- resource lookup helpers ----
 
     def get_resource_path(self, resource_id: str) -> Path | None:
         """Look up a persisted resource path by id across every indexed document.
 
         Stored values can be either POSIX-relative-to-storage (the new default,
-        portable) or absolute (legacy indexes / out-of-tree resources): both are
-        resolved back to an absolute `Path` here so callers always get a
+        portable) or absolute (legacy indexes / out-of-tree resources): both
+        are resolved back to an absolute `Path` here so callers always get a
         usable filesystem path. Returns None when the index hasn't been built
         or the id wasn't found.
+        """
+        raw = self._lookup_resource_field(resource_id, "resource_paths")
+        return self._deserialize_resource_path(raw) if raw is not None else None
+
+    def get_resource_kind(self, resource_id: str) -> str | None:
+        """Look up a resource's kind ('image' | 'table' | custom) by id."""
+        return self._lookup_resource_field(resource_id, "resource_kinds")
+
+    def get_resource_caption(self, resource_id: str) -> str | None:
+        """Look up a resource's caption (may be empty for old indexes)."""
+        return self._lookup_resource_field(resource_id, "resource_captions")
+
+    def get_resource_mime(self, resource_id: str) -> str | None:
+        """Look up a resource's mime type (may be empty for old indexes)."""
+        return self._lookup_resource_field(resource_id, "resource_mimes")
+
+    def _lookup_resource_field(self, resource_id: str, field: str) -> str | None:
+        """Find `resource_id` in any indexed doc and return the matching entry from `field`.
+
+        `field` is the metadata key holding the parallel array (e.g.
+        `"resource_paths"`, `"resource_kinds"`). Older indexes built before
+        the field existed simply return None — callers must tolerate that.
         """
         if self.index is None:
             return None
         for doc in self.index.docstore.docs.values():
             metadata = getattr(doc, "metadata", None) or {}
             ids = metadata.get("resource_ids", [])
-            paths = metadata.get("resource_paths", [])
-            if resource_id in ids:
-                return self._deserialize_resource_path(paths[ids.index(resource_id)])
+            if resource_id not in ids:
+                continue
+            values = metadata.get(field, [])
+            idx = ids.index(resource_id)
+            if idx < len(values):
+                return values[idx]
+            return None
         return None
 
     def _serialize_resource_path(self, path: Path | str) -> str:
@@ -169,6 +355,8 @@ class LlamaIndexRAG(MsLlamaIndexRAG):
             return None
         return Path(self.storage_dir).resolve()
 
+    # ---- retrieval ----
+
     async def hybrid_retrieve(
         self,
         query: str,
@@ -192,6 +380,8 @@ class LlamaIndexRAG(MsLlamaIndexRAG):
         )
         raw = await super().hybrid_search(query, top_k=top_k)
         return [r for r in raw if r["score"] >= threshold]
+
+    # ---- embedding setup (delegated from ms-agent) ----
 
     def _setup_embedding_model(self, config) -> None:
         """Dispatch on `config.rag.embedding_provider`: route 'openai' to our OpenAI-compatible installer (reuses mem0's EMBEDDING_* env, no torch/sentence-transformers needed); fall back to ms-agent's HuggingFace path otherwise."""

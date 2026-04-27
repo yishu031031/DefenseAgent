@@ -25,8 +25,15 @@ _REACT_INSTRUCTIONS = (
 
 _REACT_RAG_INSTRUCTIONS = (
     "You also have `rag_search` for static reference documents (textbooks, "
-    "manuals, lore). Use it when a question would benefit from grounded facts "
-    "from your knowledge base, distinct from your experiential memory."
+    "manuals, lore, reports). Use it when a question would benefit from "
+    "grounded facts from your knowledge base, distinct from your "
+    "experiential memory.\n\n"
+    "Each rag_search hit may contain inline `<resource_info>RID</resource_info>` "
+    "markers and a follow-up `• resource [RID] (kind) \"caption\"` listing. "
+    "When the user asks about a specific image, table, or figure cited in a "
+    "hit — call `rag_get_resource` with that RID to fetch the full content "
+    "(complete table markdown, image path + mime, or whatever the renderer "
+    "for that kind produces)."
 )
 
 _TRAJECTORY_MEMORY_TYPE = "trajectory"

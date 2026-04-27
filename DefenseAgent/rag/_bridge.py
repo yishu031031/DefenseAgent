@@ -103,14 +103,18 @@ def _resolve_documents_path(
     profile: AgentProfile,
     documents_path: str | Path | None,
 ) -> Path | None:
-    """Pick the explicit documents_path, then `<profile.source_dir>/<profile.rag.documents_dir>`. Returns None when nothing is configured (no auto-load)."""
+    """Pick the explicit documents_path; else use `profile.rag.documents_dir` (absolute paths are taken as-is, relative paths anchor to `profile.source_dir`). Returns None when nothing is configured (no auto-load)."""
     if documents_path is not None:
         return Path(documents_path).resolve()
     if not profile.rag.documents_dir:
         return None
+    candidate = Path(profile.rag.documents_dir)
+    if candidate.is_absolute():
+        return candidate.resolve()
     if profile.source_dir is None:
         raise RAGConfigError(
-            "profile.rag.documents_dir is set but profile has no source_dir; "
-            "pass documents_path explicitly when loading an in-memory profile"
+            "profile.rag.documents_dir is a relative path but profile has no "
+            "source_dir to anchor it; either pass documents_path explicitly, "
+            "or set profile.rag.documents_dir to an absolute path"
         )
     return (profile.source_dir / profile.rag.documents_dir).resolve()

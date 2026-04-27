@@ -755,3 +755,40 @@ def test_get_resource_path_preserves_legacy_absolute_entries(tmp_path: Path):
 
     assert rag.get_resource_path("legacy") == legacy
     assert rag.get_resource_path("missing") is None
+
+
+# ---------- absolute-path documents_dir on in-memory profile ----------
+
+
+def test_documents_dir_absolute_path_works_without_source_dir(tmp_path: Path):
+    """Regression: an in-memory profile with an absolute `rag.documents_dir`
+    must resolve cleanly without source_dir; only relative paths require an anchor."""
+    from DefenseAgent.rag._bridge import _resolve_documents_path
+
+    docs = tmp_path / "my_docs"
+    docs.mkdir()
+
+    # In-memory profile (no source_dir) + absolute documents_dir → should work
+    profile = AgentProfile(
+        id="t", name="t", age=1, traits="t",
+        backstory="b", initial_plan="p",
+        rag={"enabled": True, "documents_dir": str(docs.resolve())},
+    )
+    assert profile.source_dir is None
+    resolved = _resolve_documents_path(profile, None)
+    assert resolved == docs.resolve()
+
+
+def test_documents_dir_relative_still_requires_source_dir():
+    """Symmetry check: relative documents_dir on in-memory profile still raises."""
+    from DefenseAgent.rag._bridge import _resolve_documents_path
+    from DefenseAgent.rag.base import RAGConfigError
+
+    profile = AgentProfile(
+        id="t", name="t", age=1, traits="t",
+        backstory="b", initial_plan="p",
+        rag={"enabled": True, "documents_dir": "relative/docs"},
+    )
+    with pytest.raises(RAGConfigError) as ei:
+        _resolve_documents_path(profile, None)
+    assert "absolute path" in str(ei.value)

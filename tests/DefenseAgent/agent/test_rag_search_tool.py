@@ -21,10 +21,13 @@ from tests.DefenseAgent.agent._support import (
 )
 
 
-def _fake_rag(hits: list[dict[str, Any]] | None = None) -> Any:
+def _fake_rag(hits: list[dict[str, Any]] | None = None, *, render: str | None = None) -> Any:
     """Build a MagicMock standing in for LlamaIndexRAG with an awaitable retrieve()."""
     rag = MagicMock(name="LlamaIndexRAG")
     rag.retrieve = AsyncMock(return_value=list(hits or []))
+    rag.render_resource = AsyncMock(
+        return_value=render if render is not None else "(rendered resource)"
+    )
     return rag
 
 
@@ -56,11 +59,14 @@ def test_rag_search_appears_after_memory_recall_when_rag_wired():
     specs = agent._combined_tool_specs()
     assert specs is not None
     names = [s["name"] for s in specs]
-    # Order: user tools (none here) → memory_recall → rag_search.
-    assert names == [MEMORY_RECALL_TOOL_NAME, RAG_SEARCH_TOOL_NAME]
+    # Order: user tools (none here) → memory_recall → rag_search → rag_get_resource.
+    from DefenseAgent.agent import RAG_GET_RESOURCE_TOOL_NAME
+    assert names == [MEMORY_RECALL_TOOL_NAME, RAG_SEARCH_TOOL_NAME, RAG_GET_RESOURCE_TOOL_NAME]
     rag_spec = next(s for s in specs if s["name"] == RAG_SEARCH_TOOL_NAME)
     assert rag_spec["input_schema"]["required"] == ["query"]
     assert "top_k" in rag_spec["input_schema"]["properties"]
+    rag_get_spec = next(s for s in specs if s["name"] == RAG_GET_RESOURCE_TOOL_NAME)
+    assert rag_get_spec["input_schema"]["required"] == ["resource_id"]
 
 
 def test_rag_search_registered_on_simple_agent_too():
@@ -211,3 +217,113 @@ async def test_llm_can_invoke_rag_search_through_dispatch():
     assert result.tool_call_id == "t1"
     assert "heap" in result.content.lower()
     rag.retrieve.assert_awaited_once()
+
+
+# ---------- resource manifest in rag_search output ----------
+
+
+async def test_rag_search_appends_resource_manifest_lines():
+    """Hits with resource metadata should produce `• resource [RID] (kind) "caption"` lines."""
+    profile = make_profile()
+    rag = _fake_rag(hits=[{
+        "text": "Attack chain. <resource_info>r1</resource_info>",
+        "score": 0.91,
+        "metadata": {
+            "resource_ids":      ["r1", "r2"],
+            "resource_kinds":    ["image", "table"],
+            "resource_captions": ["End-to-end attack chain", ""],
+        },
+    }])
+    agent = ReActAgent(make_test_config(
+            profile=profile,
+            llm=ScriptedLLM([]),
+            memory=fake_memory(profile),
+            tools=ToolRegistry(),
+            rag=rag,
+        ))
+    out = await agent._handle_rag_search({"query": "chain"})
+    assert '• resource [r1] (image) "End-to-end attack chain"' in out
+    assert "• resource [r2] (table)" in out  # no caption case
+
+
+async def test_rag_search_truncate_preserves_resource_info_marker():
+    """Long text with embedded markers must not be cut mid-marker — when a marker fits within max_len, truncation lands just after it."""
+    from DefenseAgent.agent.base import truncate_preserving_markers
+    # Marker fully within first 100 chars; text continues for 400 more.
+    marker = "<resource_info>img_001</resource_info>"
+    text = "x" * 50 + " " + marker + " " + "y" * 400
+    out = truncate_preserving_markers(text, 200)
+    assert marker in out
+    assert out.endswith("...")
+    assert len(out) < 200  # safe truncate, not full text
+
+
+async def test_truncate_preserving_markers_no_marker_falls_back():
+    """When no marker fits within max_len, fall back to plain truncate (cuts mid-text with ...)."""
+    from DefenseAgent.agent.base import truncate_preserving_markers
+    text = "x" * 100 + " <resource_info>img_001</resource_info>" + "y" * 100
+    # max_len=50 → marker (which ends ~138) does not fit → plain truncate
+    out = truncate_preserving_markers(text, 50)
+    assert len(out) == 50
+    assert out.endswith("...")
+
+
+async def test_rag_search_no_metadata_falls_back_gracefully():
+    """Old indexes (no resource metadata) still produce sensible output."""
+    profile = make_profile()
+    rag = _fake_rag(hits=[{"text": "plain text hit", "score": 0.5}])
+    agent = ReActAgent(make_test_config(
+            profile=profile,
+            llm=ScriptedLLM([]),
+            memory=fake_memory(profile),
+            tools=ToolRegistry(),
+            rag=rag,
+        ))
+    out = await agent._handle_rag_search({"query": "x"})
+    assert "plain text hit" in out
+    assert "• resource" not in out  # no resource lines when metadata is empty
+
+
+# ---------- rag_get_resource tool ----------
+
+
+async def test_rag_get_resource_dispatches_to_rag_render():
+    profile = make_profile()
+    rag = _fake_rag(render="rendered table content here")
+    agent = ReActAgent(make_test_config(
+            profile=profile,
+            llm=ScriptedLLM([]),
+            memory=fake_memory(profile),
+            tools=ToolRegistry(),
+            rag=rag,
+        ))
+    out = await agent._handle_rag_get_resource({"resource_id": "r1"})
+    assert out == "rendered table content here"
+    rag.render_resource.assert_awaited_once_with("r1")
+
+
+async def test_rag_get_resource_empty_id_returns_diagnostic():
+    profile = make_profile()
+    rag = _fake_rag()
+    agent = ReActAgent(make_test_config(
+            profile=profile,
+            llm=ScriptedLLM([]),
+            memory=fake_memory(profile),
+            tools=ToolRegistry(),
+            rag=rag,
+        ))
+    out = await agent._handle_rag_get_resource({"resource_id": "  "})
+    assert "empty resource_id" in out
+    rag.render_resource.assert_not_awaited()
+
+
+async def test_rag_get_resource_unavailable_when_no_rag():
+    profile = make_profile()
+    agent = ReActAgent(make_test_config(
+            profile=profile,
+            llm=ScriptedLLM([]),
+            memory=fake_memory(profile),
+            tools=ToolRegistry(),
+        ))
+    out = await agent._handle_rag_get_resource({"resource_id": "r1"})
+    assert "unavailable" in out

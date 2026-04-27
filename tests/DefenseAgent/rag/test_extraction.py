@@ -377,3 +377,95 @@ def test_pypdf_extractor_raises_helpful_error_when_pdfplumber_missing(tmp_path: 
         extractor = PyPdfExtractor(tmp_path / "resources")
         with pytest.raises(RAGConfigError, match="pdfplumber"):
             extractor.extract(pdf)
+
+
+# ---------- Step 1.4 — register() / supports() ----------
+
+
+def test_facade_register_prepends_by_default(tmp_path: Path):
+    """A backend registered with prepend=True (default) wins over the built-ins for overlapping supports() — used to override behavior for a specific format."""
+    from DefenseAgent.rag.extraction import StructuredDocExtractor
+
+    profile = _profile_with_anchor(tmp_path)
+    facade = StructuredDocExtractor(profile, resources_dir=tmp_path / "rs")
+
+    custom = MagicMock(name="CustomPdfBackend")
+    custom.supports.return_value = True
+    custom.extract.return_value = []
+
+    facade.register(custom)
+
+    pdf = tmp_path / "doc.pdf"
+    pdf.write_bytes(b"%PDF-1.4 stub")
+    picked = facade._pick_backend(pdf)
+    assert picked is custom
+
+
+def test_facade_register_append_runs_after_builtins(tmp_path: Path):
+    """A backend registered with prepend=False is only consulted when no built-in claims the source — useful as a fallback."""
+    from DefenseAgent.rag.extraction import StructuredDocExtractor
+
+    profile = _profile_with_anchor(tmp_path)
+    facade = StructuredDocExtractor(profile, resources_dir=tmp_path / "rs")
+
+    fallback = MagicMock(name="FallbackBackend")
+    fallback.supports.return_value = True   # would claim everything if checked first
+    fallback.extract.return_value = []
+
+    facade.register(fallback, prepend=False)
+
+    # PDF should still go to PyPdfExtractor (built-in), not the fallback
+    pdf = tmp_path / "doc.pdf"
+    pdf.write_bytes(b"%PDF-1.4 stub")
+    picked = facade._pick_backend(pdf)
+    assert picked is not fallback   # built-in PyPdfExtractor took it
+
+    # An unrecognized format falls through to the fallback
+    weird = tmp_path / "doc.xyz"
+    weird.write_text("data")
+    picked2 = facade._pick_backend(weird)
+    assert picked2 is fallback
+
+
+def test_facade_supports_method_proxies_to_backends(tmp_path: Path):
+    """`StructuredDocExtractor.supports(source)` returns True iff any registered backend can handle it."""
+    from DefenseAgent.rag.extraction import StructuredDocExtractor
+
+    profile = _profile_with_anchor(tmp_path)
+    facade = StructuredDocExtractor(profile, resources_dir=tmp_path / "rs")
+
+    pdf = tmp_path / "doc.pdf"
+    pdf.write_bytes(b"%PDF-1.4 stub")
+    md = tmp_path / "doc.md"
+    md.write_text("# hello")
+
+    assert facade.supports(pdf) is True   # PyPdfExtractor claims it
+    assert facade.supports(md) is False   # neither built-in claims .md
+
+
+def test_facade_extract_accepts_single_source(tmp_path: Path):
+    """`extract(source)` accepts a single Path/str (not just a list) — convenience for single-file callers."""
+    from DefenseAgent.rag.extraction import StructuredDocExtractor
+
+    profile = _profile_with_anchor(tmp_path)
+    facade = StructuredDocExtractor(profile, resources_dir=tmp_path / "rs")
+
+    custom = MagicMock(name="CustomBackend")
+    custom.supports.return_value = True
+    custom.extract.return_value = []
+    facade.register(custom)
+
+    facade.extract(tmp_path / "any.txt")  # single source
+    custom.extract.assert_called_once()
+
+
+def _profile_with_anchor(tmp_path: Path) -> AgentProfile:
+    """Build a profile rooted at tmp_path so resources_dir resolution works."""
+    yaml_path = tmp_path / "profile.yaml"
+    yaml_path.write_text(
+        'agent:\n'
+        '  id: "t"\n  name: "T"\n  age: 30\n'
+        '  traits: "x"\n  backstory: "x"\n  initial_plan: "x"\n',
+        encoding="utf-8",
+    )
+    return AgentProfile.from_yaml(yaml_path)

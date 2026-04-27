@@ -4,6 +4,9 @@ from DefenseAgent.agent.base import (
     AgentStep,
     AgentStepLimitError,
     BaseAgent,
+    MEMORY_RECALL_TOOL_NAME,
+    RAG_GET_RESOURCE_TOOL_NAME,
+    RAG_SEARCH_TOOL_NAME,
     StepKind,
 )
 from DefenseAgent.agent.config import AgentConfig
@@ -22,4 +25,7 @@ __all__ = [
     "StepKind",
     "AgentError",
     "AgentStepLimitError",
+    "MEMORY_RECALL_TOOL_NAME",
+    "RAG_SEARCH_TOOL_NAME",
+    "RAG_GET_RESOURCE_TOOL_NAME",
 ]
