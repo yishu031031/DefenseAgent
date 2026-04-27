@@ -40,12 +40,12 @@ class ReActAgent(BaseAgent):
         config = AgentConfig(profile="agents/example_agent/profile.yaml")
         agent = ReActAgent(config)
 
-    The agent builds its own LLM, memory, tools, reflector, compactor and
+    The agent builds its own LLM, memory, tools, reflector, compressor and
     logger from the profile + flags. MCP servers and RAG (when not pre-injected)
     are wired lazily on the first `run()` call — they need `await`.
 
     Inject pre-built components (mocks, custom adapters) via the `llm`,
-    `memory`, `tools_registry`, `reflector`, `rag`, `logger` fields on
+    `memory`, `tool_registry`, `reflector`, `rag`, `logger` fields on
     `AgentConfig`.
     """
 
@@ -59,13 +59,13 @@ class ReActAgent(BaseAgent):
             tools=built.tools,
             reflector=built.reflector,
             logger=built.logger,
-            compactor=built.compactor,
+            compressor=built.compressor,
             rag=built.rag,
         )
         self._config = config
         self.memory_recall_top_k = config.memory_recall_top_k
-        self.persist_outcome = config.persist_outcome and config.use_memory
-        self.persist_trajectory = config.persist_trajectory and config.use_memory
+        self.save_outcome = config.save_outcome and config.use_memory
+        self.save_trajectory = config.save_trajectory and config.use_memory
         self.reflect_after_run = (
             config.reflect_after_run and config.use_reflection and config.use_memory
         )
@@ -121,8 +121,8 @@ class ReActAgent(BaseAgent):
                     step=i,
                     total_tokens=total.total_tokens,
                 )
-                if self.persist_outcome:
-                    await self._persist_outcome(task, response.content)
+                if self.save_outcome:
+                    await self._save_outcome(task, response.content)
                 return AgentResult(
                     task=task,
                     final_answer=response.content,
@@ -140,8 +140,8 @@ class ReActAgent(BaseAgent):
                 f"ReAct exceeded max_steps={cap} without producing a final answer"
             )
         except AgentStepLimitError:
-            if self.persist_outcome:
-                await self._persist_outcome(
+            if self.save_outcome:
+                await self._save_outcome(
                     task,
                     f"FAILED: exceeded max_steps={cap}",
                     memory_type=FAILURE_MEMORY_TYPE,
@@ -196,15 +196,15 @@ class ReActAgent(BaseAgent):
             )
         )
 
-        if self.persist_trajectory:
-            await self._persist_trajectory(
+        if self.save_trajectory:
+            await self._save_trajectory(
                 task=task,
                 step_index=step_index,
                 tool_calls=tool_calls,
                 tool_results=tool_results,
             )
 
-    async def _persist_trajectory(
+    async def _save_trajectory(
         self,
         *,
         task: str,
@@ -229,7 +229,7 @@ class ReActAgent(BaseAgent):
                 memory_type=_TRAJECTORY_MEMORY_TYPE,
             )
         except Exception as e:
-            self._log("warn", "agent.persist_trajectory_failed", str(e))
+            self._log("warn", "agent.save_trajectory_failed", str(e))
 
     def _build_system_prompt(self) -> str:
         """Static system prompt: identity + ReAct instructions (+ rag tip when wired + optional user extras). Memory injection is now handled by `_condense_memory` on every loop turn."""

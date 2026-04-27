@@ -4,7 +4,7 @@ DefenseAgent ships three agent strategies — `SimpleAgent`, `ReActAgent`,
 `PlanAndSolveAgent` — that all accept the **same single argument**: an
 `AgentConfig` instance. The config bundles the agent's identity (a YAML
 profile or a pre-built `AgentProfile`) with on/off switches for every
-optional subsystem (tools, memory, reflection, RAG, context compactor,
+optional subsystem (tools, memory, reflection, RAG, context compressor,
 logger) plus the per-strategy knobs.
 
 ```python
@@ -53,10 +53,10 @@ async with ReActAgent(config) as agent:
 | Field             | Type             | Default | Meaning                                                                                                    |
 | ----------------- | ---------------- | ------- | ---------------------------------------------------------------------------------------------------------- |
 | `use_tools`       | `bool`           | `True`  | Register user tools (`tools=`, `profile.tools.skills`, `profile.tools.mcp`).                               |
-| `use_memory`      | `bool`           | `True`  | Build mem0-backed `DefaultMemory`, register `memory_recall`, persist outcomes/trajectories.                |
+| `use_memory`      | `bool`           | `True`  | Build mem0-backed `Mem0Memory`, register `memory_recall`, persist outcomes/trajectories.                   |
 | `use_reflection`  | `bool`           | `True`  | Build a `Reflector` and run it after every `run()` (still gated by its own threshold). Needs memory.       |
 | `use_rag`         | `bool \| None`   | `None`  | `True` forces RAG on, `False` forces it off, `None` follows `profile.rag.enabled`.                         |
-| `use_compactor`   | `bool`           | `True`  | Build a `ContextCompressor` and chain it after memory in the per-step condense pipeline.                   |
+| `use_compressor`   | `bool`           | `True`  | Build a `ContextCompressor` and chain it after memory in the per-step condense pipeline.                   |
 | `use_logger`      | `bool`           | `True`  | Build an `AgentLogger` writing to `<log_dir>/<profile.id>.log`.                                            |
 
 ### Tool wiring
@@ -71,9 +71,9 @@ async with ReActAgent(config) as agent:
 | Field                    | Type           | Default | Meaning                                                                                                     |
 | ------------------------ | -------------- | ------- | ----------------------------------------------------------------------------------------------------------- |
 | `memory_recall_top_k`    | `int`          | `5`     | Default `top_k` for the agent-owned `memory_recall` tool when the LLM omits one. `0` suppresses recall.     |
-| `persist_outcome`        | `bool`         | `True`  | After each `run()`, write a `(Q → A)` pair to memory tagged `outcome` (or `failure` on errors).             |
-| `persist_trajectory`     | `bool`         | `True`  | Per ReAct tool turn, write a one-line summary tagged `trajectory`. ReAct only.                              |
-| `reflect_after_run`      | `bool`         | `True`  | Call `Reflector.check_and_reflect` after each `run()`.                                                      |
+| `save_outcome`        | `bool`         | `True`  | After each `run()`, write a `(Q → A)` pair to memory tagged `outcome` (or `failure` on errors).             |
+| `save_trajectory`     | `bool`         | `True`  | Per ReAct tool turn, write a one-line summary tagged `trajectory`. ReAct only.                              |
+| `reflect_after_run`      | `bool`         | `True`  | Call `Reflector.maybe_reflect` after each `run()`.                                                          |
 | `extra_instructions`     | `str \| None`  | `None`  | Free-form text appended to the system prompt — tone, output format, hard rules.                             |
 | `max_substeps_per_step`  | `int`          | `3`     | `PlanAndSolveAgent` only — per-plan-step tool-call budget.                                                  |
 | `max_steps`              | `int \| None`  | `None`  | Default `max_steps` for `agent.run(task)`. `None` falls back to `profile.cognitive.max_steps_per_cycle`.    |
@@ -85,7 +85,7 @@ async with ReActAgent(config) as agent:
 Some toggles depend on each other. The agent silently disables dependents
 when the parent is off — you don't need to flip every flag manually:
 
-* `use_memory=False` → `persist_outcome`, `persist_trajectory`,
+* `use_memory=False` → `save_outcome`, `save_trajectory`,
   `reflect_after_run`, and the `memory_recall` built-in tool are all forced off.
 * `use_reflection=False` → `reflect_after_run` is forced off.
 
@@ -94,7 +94,7 @@ when the parent is off — you don't need to flip every flag manually:
 ## Sync vs. async setup
 
 `agent = ReActAgent(config)` is **synchronous**. It builds the LLM, memory,
-Python-function tools, skills, reflector, compactor and logger immediately.
+Python-function tools, skills, reflector, compressor and logger immediately.
 
 Two pieces need `await` and are wired lazily on the first `run()` call:
 
@@ -117,7 +117,7 @@ config = AgentConfig(
     use_tools=False,
     use_memory=False,
     use_reflection=False,
-    use_compactor=False,
+    use_compressor=False,
     use_logger=False,
 )
 agent = SimpleAgent(config)
@@ -162,7 +162,7 @@ agent = ReActAgent(
     memory=my_memory,
     tools=my_registry,
     reflector=my_reflector,
-    persist_outcome=False,
+    save_outcome=False,
 )
 ```
 

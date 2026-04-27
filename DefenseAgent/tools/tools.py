@@ -195,7 +195,7 @@ class ToolRegistry:
             raise ToolNotFoundError(f"no tool named {name!r}")
         return self._tools[name]
 
-    def spec(self) -> list[dict[str, Any]]:
+    def specs(self) -> list[dict[str, Any]]:
         """Return every registered tool as a canonical {name, description, input_schema} dict for the LLM."""
         return [
             {

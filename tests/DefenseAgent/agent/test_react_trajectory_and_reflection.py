@@ -17,14 +17,14 @@ from tests.DefenseAgent.agent._support import (
 
 
 class _FakeReflector:
-    """Reflector stand-in that records how many times check_and_reflect() was awaited and can be made to raise."""
+    """Reflector stand-in that records how many times maybe_reflect() was awaited and can be made to raise."""
 
     def __init__(self, *, raise_on_reflect: bool = False):
         """Configure whether reflection should raise; start with zero call count."""
         self.call_count = 0
         self._raise = raise_on_reflect
 
-    async def check_and_reflect(self):
+    async def maybe_reflect(self):
         """Count each call; raise RuntimeError if configured to do so."""
         self.call_count += 1
         if self._raise:
@@ -65,8 +65,8 @@ async def test_trajectory_writes_one_observation_per_step():
             memory=memory,
             tools=registry,
             memory_recall_top_k=0,
-            persist_outcome=True,
-            persist_trajectory=True,
+            save_outcome=True,
+            save_trajectory=True,
             reflect_after_run=False,
         ))
 
@@ -117,8 +117,8 @@ async def test_trajectory_consolidates_multiple_tool_calls_into_one_record():
             memory=memory,
             tools=registry,
             memory_recall_top_k=0,
-            persist_outcome=False,
-            persist_trajectory=True,
+            save_outcome=False,
+            save_trajectory=True,
             reflect_after_run=False,
         ))
     await agent.run("task", max_steps=5)
@@ -134,7 +134,7 @@ async def test_trajectory_consolidates_multiple_tool_calls_into_one_record():
     assert content.count(";") >= 2
 
 
-async def test_persist_trajectory_false_writes_no_trajectory_records():
+async def test_save_trajectory_false_writes_no_trajectory_records():
     profile = make_profile()
     memory = fake_memory(profile)
     registry = ToolRegistry()
@@ -159,8 +159,8 @@ async def test_persist_trajectory_false_writes_no_trajectory_records():
             memory=memory,
             tools=registry,
             memory_recall_top_k=0,
-            persist_outcome=True,
-            persist_trajectory=False,  # ← key knob
+            save_outcome=True,
+            save_trajectory=False,  # ← key knob
             reflect_after_run=False,
         ))
     await agent.run("task", max_steps=5)
@@ -195,8 +195,8 @@ async def test_trajectory_previews_truncate_long_results():
             memory=memory,
             tools=registry,
             memory_recall_top_k=0,
-            persist_outcome=False,
-            persist_trajectory=True,
+            save_outcome=False,
+            save_trajectory=True,
             reflect_after_run=False,
         ))
     await agent.run("t", max_steps=3)
@@ -223,8 +223,8 @@ async def test_reflection_fires_on_success():
             tools=ToolRegistry(),
             reflector=reflector,
             memory_recall_top_k=0,
-            persist_outcome=False,
-            persist_trajectory=False,
+            save_outcome=False,
+            save_trajectory=False,
             reflect_after_run=True,
         ))
     await agent.run("q", max_steps=2)
@@ -259,8 +259,8 @@ async def test_reflection_fires_on_max_steps_exhaustion():
             tools=registry,
             reflector=reflector,
             memory_recall_top_k=0,
-            persist_outcome=False,
-            persist_trajectory=False,
+            save_outcome=False,
+            save_trajectory=False,
             reflect_after_run=True,
         ))
     with pytest.raises(AgentStepLimitError):
@@ -280,8 +280,8 @@ async def test_reflection_failure_does_not_mask_success():
             tools=ToolRegistry(),
             reflector=reflector,
             memory_recall_top_k=0,
-            persist_outcome=False,
-            persist_trajectory=False,
+            save_outcome=False,
+            save_trajectory=False,
             reflect_after_run=True,
         ))
     # The run must return normally even though reflection raised.
@@ -317,8 +317,8 @@ async def test_reflection_failure_does_not_mask_step_limit_error():
             tools=registry,
             reflector=reflector,
             memory_recall_top_k=0,
-            persist_outcome=False,
-            persist_trajectory=False,
+            save_outcome=False,
+            save_trajectory=False,
             reflect_after_run=True,
         ))
     # Original exception (AgentStepLimitError) must propagate, not the reflection error.
@@ -353,8 +353,8 @@ async def test_failure_path_persists_outcome_with_failed_prefix():
             memory=memory,
             tools=registry,
             memory_recall_top_k=0,
-            persist_outcome=True,
-            persist_trajectory=False,
+            save_outcome=True,
+            save_trajectory=False,
             reflect_after_run=False,
         ))
     with pytest.raises(AgentStepLimitError):
@@ -369,8 +369,8 @@ async def test_failure_path_persists_outcome_with_failed_prefix():
     assert "max_steps=3" in failure_msg.content
 
 
-async def test_failure_outcome_skipped_when_persist_outcome_false():
-    """persist_outcome=False disables outcome writes on both success and failure paths."""
+async def test_failure_outcome_skipped_when_save_outcome_false():
+    """save_outcome=False disables outcome writes on both success and failure paths."""
     profile = make_profile()
     memory = fake_memory(profile)
     registry = ToolRegistry()
@@ -395,8 +395,8 @@ async def test_failure_outcome_skipped_when_persist_outcome_false():
             memory=memory,
             tools=registry,
             memory_recall_top_k=0,
-            persist_outcome=False,
-            persist_trajectory=False,
+            save_outcome=False,
+            save_trajectory=False,
             reflect_after_run=False,
         ))
     with pytest.raises(AgentStepLimitError):
@@ -415,8 +415,8 @@ async def test_reflect_after_run_false_skips_reflection_on_both_paths():
             tools=ToolRegistry(),
             reflector=reflector,
             memory_recall_top_k=0,
-            persist_outcome=False,
-            persist_trajectory=False,
+            save_outcome=False,
+            save_trajectory=False,
             reflect_after_run=False,
         ))
     await agent.run("q", max_steps=2)

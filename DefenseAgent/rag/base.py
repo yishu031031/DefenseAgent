@@ -31,7 +31,7 @@ class RAG(ABC):
         """Return top-`limit` passages matching `query` as dicts with at least `text` and `score`."""
 
     @abstractmethod
-    async def query(self, query: str) -> str:
+    async def answer(self, query: str) -> str:
         """Synthesize an answer from retrieved passages; only available when `retrieve_only=False`."""
 
 

@@ -17,13 +17,13 @@ print(result.final_answer)
 
 ## 亮点
 
-- **LLM 厂商无关**。一个 `LLM` facade 屏蔽 Anthropic 和所有 OpenAI 协议兼容厂商（DeepSeek、Qwen / DashScope、ModelScope、vLLM、Google 走代理）。改 `.env` 即可切换；或者代码里 `LLM.from_kwargs(provider="...", api_key="...", model="...")`。
+- **LLM 厂商无关**。一个 `LLM` facade 屏蔽 Anthropic 和所有 OpenAI 协议兼容厂商（DeepSeek、Qwen / DashScope、ModelScope、vLLM、Google 走代理）。改 `.env` 即可切换；或者代码里 `LLM.create(provider="...", api_key="...", model="...")`。
 - **三种推理策略**。`SimpleAgent`（单轮）、`ReActAgent`（Yao et al. 2022 —— 推理与工具调用交替）、`PlanAndSolveAgent`（Wang et al. 2023 —— 计划/执行/综合三阶段）。三个共用同一个 `AgentConfig` 入口。
 - **持久化语义记忆**。mem0 + qdrant 落盘存储。跨轮 `memory_recall` 作为内置 LLM 工具暴露；outcome / failure / trajectory 用 `memory_type` 分类，便于后续筛选与反思。
 - **多模态 RAG**。`LlamaIndexRAG` + `StructuredDocExtractor`，HTML / PDF 切块时**保留嵌入图片和表格**。装了 `fastembed` 之后启用向量 + BM25 混合检索。
 - **三种工具来源统一接口**。普通 Python 函数（`@registry.tool`）、Anthropic 风格 Skill 包（一个目录加 `SKILL.md`）、stdio 协议的 MCP 服务器 —— 都通过同一个 `ToolRegistry`。
 - **反思机制**。`Reflector` 收集未反思过的记忆，让 LLM 综合成高层洞察，回写到 mem0 并标记 `memory_type="reflection"`。阈值触发，**永远不会向上抛错**。
-- **单一构造路径**。每个 agent 都通过一个 `AgentConfig` 对象构建 —— 没有重载构造器、没有"两个门"。测试时通过 `AgentConfig.llm` / `memory` / `tools_registry` / `reflector` / 等字段注入 mock。
+- **单一构造路径**。每个 agent 都通过一个 `AgentConfig` 对象构建 —— 没有重载构造器、没有"两个门"。测试时通过 `AgentConfig.llm` / `memory` / `tool_registry` / `reflector` / 等字段注入 mock。
 
 ---
 
@@ -133,7 +133,7 @@ from DefenseAgent import AgentConfig, ReActAgent
 from DefenseAgent.llm import LLM
 from DefenseAgent.memory import MemoryBackendConfig
 
-llm = LLM.from_kwargs(
+llm = LLM.create(
     provider="anthropic", api_key="sk-...", model="claude-opus-4-7",
 )
 backend = MemoryBackendConfig(
@@ -266,7 +266,7 @@ pytest tests/DefenseAgent/test_integration.py  # 跨模块集成
 ## 设计要点
 
 ### 单一构造路径
-每个 agent 通过 `Agent(config)` 构造，`config: AgentConfig`。v0.1 重构里删掉了老的 `Agent(profile, llm=..., memory=..., ...)` keyword 入口 —— 现在通过 `AgentConfig.llm` / `memory` / `tools_registry` / `reflector` / `compactor` / `rag` 字段做注入。
+每个 agent 通过 `Agent(config)` 构造，`config: AgentConfig`。v0.1 重构里删掉了老的 `Agent(profile, llm=..., memory=..., ...)` keyword 入口 —— 现在通过 `AgentConfig.llm` / `memory` / `tool_registry` / `reflector` / `compressor` / `rag` 字段做注入。
 
 ### 两套 memory 配置入口，同一个对象出口
 `MemoryBackendConfig`（纯代码）和 `.env`（默认）最终产生同样的 mem0 连接。SDK 调用方传 `AgentConfig(memory_backend=...)`；本地开发用 `.env`。
@@ -275,7 +275,7 @@ pytest tests/DefenseAgent/test_integration.py  # 跨模块集成
 `DefenseAgent.llm._registry._resolve_adapter(provider)` 把厂商 SDK 的 import 放在 if 分支**内部**。一个只用 DeepSeek 的用户，不用承担 import `anthropic` 包的开销。
 
 ### 两阶段构造
-`AgentConfig` → `build_components_sync(config)`（同步：LLM / memory / tools / reflector / compactor / logger）→ `agent._ensure_async_setup()`（懒加载：MCP 服务器 + RAG，这两者必须 `await`）。
+`AgentConfig` → `build_components_sync(config)`（同步：LLM / memory / tools / reflector / compressor / logger）→ `agent._ensure_async_setup()`（懒加载：MCP 服务器 + RAG，这两者必须 `await`）。
 
 ---
 

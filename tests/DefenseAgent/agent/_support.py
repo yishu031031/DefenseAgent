@@ -1,4 +1,4 @@
-"""Shared stubs for the agent test suite: a scripted LLM, a fake DefaultMemory, profile factories."""
+"""Shared stubs for the agent test suite: a scripted LLM, a fake Mem0Memory, profile factories."""
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
@@ -68,9 +68,9 @@ def resp(content: str = "", tool_calls: list[ToolCall] | None = None) -> LLMResp
 
 
 def fake_memory(profile: AgentProfile | None = None) -> Any:
-    """Build a MagicMock standing in for DefaultMemory: profile + AsyncMock add() + sync search_records/get_all returning []."""
+    """Build a MagicMock standing in for Mem0Memory: profile + AsyncMock add() + sync search_records/get_all returning []."""
     profile = profile or make_profile()
-    mem = MagicMock(name="DefaultMemory")
+    mem = MagicMock(name="Mem0Memory")
     mem.profile = profile
     mem.add = AsyncMock(return_value=None)
     mem.search_records = MagicMock(return_value=[])
@@ -111,10 +111,10 @@ def make_test_config(
     memory: Any = None,
     tools: ToolRegistry | None = None,
     reflector: Any = None,
-    compactor: Any = None,
+    compressor: Any = None,
     rag: Any = None,
-    persist_outcome: bool = False,
-    persist_trajectory: bool = False,
+    save_outcome: bool = False,
+    save_trajectory: bool = False,
     reflect_after_run: bool = False,
     memory_recall_top_k: int = 0,
     extra_instructions: str | None = None,
@@ -122,10 +122,10 @@ def make_test_config(
     max_steps: int | None = None,
 ) -> AgentConfig:
     """Build an AgentConfig that injects pre-built test stubs and disables every
-    auto-built side-channel (compactor, logger, env-driven build paths) so unit
+    auto-built side-channel (compressor, logger, env-driven build paths) so unit
     tests stay hermetic and offline.
 
-    The default behavior knobs (`persist_outcome=False`, `reflect_after_run=False`,
+    The default behavior knobs (`save_outcome=False`, `reflect_after_run=False`,
     `memory_recall_top_k=0`) keep simple test agents minimal — flip them per-test
     when exercising those code paths.
     """
@@ -136,20 +136,20 @@ def make_test_config(
         use_tools=tools is None,              # only auto-register skills if no registry injected
         use_memory=memory is not None,        # only build mem0 if no memory injected (and we never do)
         use_reflection=reflector is not None, # only build Reflector if no reflector injected
-        use_compactor=compactor is not None,  # only auto-build compactor when injected one wins via injection field
+        use_compressor=compressor is not None,  # only auto-build compressor when injected one wins via injection field
         use_logger=False,                     # tests don't write logs
         use_rag=rag is not None,              # only build RAG if injected
         # injections
         llm=llm,
         memory=memory,
-        tools_registry=tools,
+        tool_registry=tools,
         reflector=reflector,
-        compactor=compactor,
+        compressor=compressor,
         rag=rag,
         # behavior knobs
         memory_recall_top_k=memory_recall_top_k,
-        persist_outcome=persist_outcome,
-        persist_trajectory=persist_trajectory,
+        save_outcome=save_outcome,
+        save_trajectory=save_trajectory,
         reflect_after_run=reflect_after_run,
         extra_instructions=extra_instructions,
         max_substeps_per_step=max_substeps_per_step,

@@ -43,8 +43,8 @@ class _Mem0AddProxy:
             setattr(self._underlying, name, value)
 
 
-class DefaultMemory(MsDefaultMemory):
-    """Inherits ms-agent's mem0-backed DefaultMemory; takes our AgentProfile and converts at the Message boundary on `run()` / `add()`."""
+class Mem0Memory(MsDefaultMemory):
+    """Mem0-backed memory: inherits ms-agent's `DefaultMemory`, takes our `AgentProfile`, and converts at the `Message` boundary on `run()` / `add()`."""
 
     def __init__(
         self,
@@ -58,7 +58,7 @@ class DefaultMemory(MsDefaultMemory):
         dotenv_path: str | None = None,
         backend: MemoryBackendConfig | None = None,
     ) -> None:
-        """Build the ms-agent DictConfig from `profile` (+ optional backend kwargs or .env), ensure the storage dir exists, then defer to ms_agent.DefaultMemory's `__init__`. When `backend=` is given, env vars are not consulted; otherwise the legacy .env path is used."""
+        """Build the ms-agent DictConfig from `profile` (+ optional backend kwargs or .env), ensure the storage dir exists, then defer to ms-agent's `DefaultMemory.__init__`. When `backend=` is given, env vars are not consulted; otherwise the legacy .env path is used."""
         # Skip dotenv when the caller already supplied a programmatic backend —
         # they don't want env-var influence at all.
         if load_env and backend is None:
@@ -112,8 +112,11 @@ class DefaultMemory(MsDefaultMemory):
             memory_type=memory_type,
         )
 
-    def search(self, query: str, meta_infos: list[dict[str, Any]] | None = None) -> list[str]:
-        """Override ms-agent's search() with mem0's new `filters=` API and return the same list[str] shape so inherited callers (notably ms-agent's `run()`) keep working."""
+    def search_texts(self, query: str, meta_infos: list[dict[str, Any]] | None = None) -> list[str]:
+        """Return mem0 hits as plain text strings (sibling to `search_records`, which returns full record dicts).
+
+        Overrides ms-agent's `search()` shape so inherited callers (notably ms-agent's `run()`) keep working — `search` is kept as an alias below.
+        """
         if not query:
             return []
         if meta_infos is None:
@@ -176,17 +179,21 @@ class DefaultMemory(MsDefaultMemory):
             results = [r for r in results if record_memory_type(r) == memory_type]
         return results
 
+    # Keep `search` as an alias so ms-agent's inherited `run()` path keeps
+    # working (it calls `self.search(...)` with the legacy shape).
+    search = search_texts
+
     @classmethod
     def from_profile(
         cls,
         profile: AgentProfile,
         **kwargs: Any,
-    ) -> "DefaultMemory":
+    ) -> "Mem0Memory":
         """Convenience constructor matching the rest of DefenseAgent's `from_profile` pattern."""
         return cls(profile, **kwargs)
 
     @classmethod
-    def from_kwargs(
+    def create(
         cls,
         profile: AgentProfile,
         *,
@@ -195,7 +202,7 @@ class DefaultMemory(MsDefaultMemory):
         user_id: str = "default_user",
         agent_id: str | None = None,
         run_id: str = "default_run",
-    ) -> "DefaultMemory":
+    ) -> "Mem0Memory":
         """Build mem0-backed memory from explicit args — no .env required.
 
         Use this from SDK code, tests, or multi-tenant servers where each

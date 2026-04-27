@@ -8,12 +8,12 @@ from DefenseAgent.memory.base import (
     MemoryProviderError,
 )
 from DefenseAgent.memory.context_compressor import ContextCompressor
-from DefenseAgent.memory.default_memory import DefaultMemory
+from DefenseAgent.memory.mem0_memory import Mem0Memory
 from DefenseAgent.memory.shared import SharedMemoryManager
 
 __all__ = [
     "Memory",
-    "DefaultMemory",
+    "Mem0Memory",
     "ContextCompressor",
     "MemoryBackendConfig",
     "SharedMemoryManager",

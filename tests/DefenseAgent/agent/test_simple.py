@@ -28,7 +28,7 @@ def _make_agent(
     *,
     llm=None,
     memory=None,
-    persist_outcome: bool = True,
+    save_outcome: bool = True,
     reflect_after_run: bool = True,
     extra_instructions: str | None = None,
     reflector=None,
@@ -41,7 +41,7 @@ def _make_agent(
         memory=memory or fake_memory(profile),
         tools=ToolRegistry(),
         reflector=reflector,
-        persist_outcome=persist_outcome,
+        save_outcome=save_outcome,
         reflect_after_run=reflect_after_run,
         extra_instructions=extra_instructions,
     )
@@ -56,7 +56,7 @@ def test_simple_agent_inherits_base_agent():
 async def test_run_makes_exactly_one_llm_call():
     llm = ScriptedLLM([resp(content="answer")])
     agent = _make_agent(
-        llm=llm, persist_outcome=False, reflect_after_run=False,
+        llm=llm, save_outcome=False, reflect_after_run=False,
     )
     result = await agent.run("hello")
     assert result.final_answer == "answer"
@@ -68,7 +68,7 @@ async def test_run_makes_exactly_one_llm_call():
 async def test_run_passes_identity_prompt_as_system():
     llm = ScriptedLLM([resp(content="ok")])
     agent = _make_agent(
-        llm=llm, persist_outcome=False, reflect_after_run=False,
+        llm=llm, save_outcome=False, reflect_after_run=False,
     )
     await agent.run("ping")
     system = llm.calls[0]["system"]
@@ -81,7 +81,7 @@ async def test_extra_instructions_appended_to_system_prompt():
     agent = _make_agent(
         llm=llm,
         extra_instructions="ALWAYS BE TERSE.",
-        persist_outcome=False,
+        save_outcome=False,
         reflect_after_run=False,
     )
     await agent.run("ping")
@@ -96,7 +96,7 @@ async def test_run_invokes_memory_condensation_before_chat():
         llm=ScriptedLLM([resp(content="ok")]),
         memory=memory,
         tools=ToolRegistry(),
-        persist_outcome=False,
+        save_outcome=False,
         reflect_after_run=False,
     )
     agent = SimpleAgent(config)
@@ -104,7 +104,7 @@ async def test_run_invokes_memory_condensation_before_chat():
     assert memory.run.await_count == 1
 
 
-async def test_persist_outcome_writes_success_record():
+async def test_save_outcome_writes_success_record():
     memory = fake_memory()
     agent = _make_agent(memory=memory, reflect_after_run=False)
     await agent.run("question")
@@ -113,7 +113,7 @@ async def test_persist_outcome_writes_success_record():
     assert call.kwargs["memory_type"] == "outcome"
 
 
-async def test_persist_outcome_writes_failure_record_when_llm_raises():
+async def test_save_outcome_writes_failure_record_when_llm_raises():
     memory = fake_memory()
     failing_llm = MagicMock()
     failing_llm.chat = AsyncMock(side_effect=RuntimeError("boom"))
@@ -126,10 +126,10 @@ async def test_persist_outcome_writes_failure_record_when_llm_raises():
     assert memory.add.await_args.kwargs["memory_type"] == "failure"
 
 
-async def test_persist_outcome_disabled_skips_writes():
+async def test_save_outcome_disabled_skips_writes():
     memory = fake_memory()
     agent = _make_agent(
-        memory=memory, persist_outcome=False, reflect_after_run=False,
+        memory=memory, save_outcome=False, reflect_after_run=False,
     )
     await agent.run("question")
     assert memory.add.await_count == 0
@@ -137,33 +137,33 @@ async def test_persist_outcome_disabled_skips_writes():
 
 async def test_reflect_after_run_runs_on_success():
     reflector = MagicMock()
-    reflector.check_and_reflect = AsyncMock(return_value=[])
+    reflector.maybe_reflect = AsyncMock(return_value=[])
     agent = _make_agent(
-        reflector=reflector, persist_outcome=False,
+        reflector=reflector, save_outcome=False,
     )
     await agent.run("question")
-    assert reflector.check_and_reflect.await_count == 1
+    assert reflector.maybe_reflect.await_count == 1
 
 
 async def test_reflect_after_run_runs_on_failure_too():
     """Reflection must fire even when the LLM call raises — failure traces still feed insight."""
     reflector = MagicMock()
-    reflector.check_and_reflect = AsyncMock(return_value=[])
+    reflector.maybe_reflect = AsyncMock(return_value=[])
     failing_llm = MagicMock()
     failing_llm.chat = AsyncMock(side_effect=RuntimeError("boom"))
     agent = _make_agent(
-        llm=failing_llm, reflector=reflector, persist_outcome=False,
+        llm=failing_llm, reflector=reflector, save_outcome=False,
     )
     with pytest.raises(RuntimeError):
         await agent.run("question")
-    assert reflector.check_and_reflect.await_count == 1
+    assert reflector.maybe_reflect.await_count == 1
 
 
 async def test_max_steps_argument_is_accepted_but_ignored():
     """The interface accepts max_steps for uniformity with ReAct/PlanAndSolve, but SimpleAgent has no loop to cap."""
     llm = ScriptedLLM([resp(content="ok")])
     agent = _make_agent(
-        llm=llm, persist_outcome=False, reflect_after_run=False,
+        llm=llm, save_outcome=False, reflect_after_run=False,
     )
     result = await agent.run("ping", max_steps=99)
     assert result.final_answer == "ok"

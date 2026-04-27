@@ -28,7 +28,7 @@ def _bare_agent(llm, *, tools=None, max_substeps_per_step=3) -> PlanAndSolveAgen
         tools=tools,
         memory_recall_top_k=0,
         max_substeps_per_step=max_substeps_per_step,
-        persist_outcome=False,
+        save_outcome=False,
         reflect_after_run=False,
     )
     return PlanAndSolveAgent(config)
@@ -133,7 +133,7 @@ async def test_bad_plan_persists_failure_outcome():
         tools=ToolRegistry(),
         memory_recall_top_k=0,
         max_substeps_per_step=2,
-        persist_outcome=True,
+        save_outcome=True,
         reflect_after_run=False,
     )
     agent = PlanAndSolveAgent(config)
@@ -148,8 +148,8 @@ async def test_bad_plan_persists_failure_outcome():
     assert "FAILED" in failure_msg.content
 
 
-async def test_bad_plan_failure_skipped_when_persist_outcome_false():
-    """persist_outcome=False disables the failure outcome write just like the success outcome."""
+async def test_bad_plan_failure_skipped_when_save_outcome_false():
+    """save_outcome=False disables the failure outcome write just like the success outcome."""
     profile = make_profile()
     memory = fake_memory(profile)
     llm = ScriptedLLM([resp(content="garbage")])
@@ -160,7 +160,7 @@ async def test_bad_plan_failure_skipped_when_persist_outcome_false():
         tools=ToolRegistry(),
         memory_recall_top_k=0,
         max_substeps_per_step=2,
-        persist_outcome=False,
+        save_outcome=False,
         reflect_after_run=False,
     )
     agent = PlanAndSolveAgent(config)
@@ -229,7 +229,7 @@ async def test_plan_system_prompt_contains_identity_but_not_exec_instructions():
     assert "executing ONE step" in exec_system
 
 
-async def test_persist_outcome_stores_final_answer():
+async def test_save_outcome_stores_final_answer():
     profile = make_profile()
     memory = fake_memory(profile)
     llm = ScriptedLLM(
@@ -246,7 +246,7 @@ async def test_persist_outcome_stores_final_answer():
         tools=ToolRegistry(),
         memory_recall_top_k=0,
         max_substeps_per_step=2,
-        persist_outcome=True,
+        save_outcome=True,
         reflect_after_run=False,
     )
     agent = PlanAndSolveAgent(config)

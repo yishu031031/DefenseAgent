@@ -7,12 +7,8 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from DefenseAgent.agent import (
-    MEMORY_RECALL_TOOL_NAME,
-    RAG_SEARCH_TOOL_NAME,
-    ReActAgent,
-    SimpleAgent,
-)
+from DefenseAgent.agent import ReActAgent, SimpleAgent
+from DefenseAgent.agent.base import MEMORY_RECALL_TOOL_NAME, RAG_SEARCH_TOOL_NAME
 from DefenseAgent.llm.types import ToolCall
 from DefenseAgent.tools import ToolRegistry
 

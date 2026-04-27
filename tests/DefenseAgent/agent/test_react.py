@@ -26,7 +26,7 @@ def _bare_agent(llm, *, profile=None, tools=None, memory=None) -> ReActAgent:
         memory=memory,
         tools=tools,
         memory_recall_top_k=0,
-        persist_outcome=False,
+        save_outcome=False,
         reflect_after_run=False,
     )
     return ReActAgent(config)
@@ -131,7 +131,7 @@ async def test_max_steps_exhausted_raises():
 # ---------- memory + reflection wiring ----------
 
 
-async def test_persist_outcome_writes_observation_to_memory():
+async def test_save_outcome_writes_observation_to_memory():
     profile = make_profile()
     memory = fake_memory(profile)
     llm = ScriptedLLM([resp(content="final answer")])
@@ -141,7 +141,7 @@ async def test_persist_outcome_writes_observation_to_memory():
         memory=memory,
         tools=ToolRegistry(),
         memory_recall_top_k=0,
-        persist_outcome=True,
+        save_outcome=True,
         reflect_after_run=False,
     )
     agent = ReActAgent(config)
@@ -156,15 +156,15 @@ async def test_persist_outcome_writes_observation_to_memory():
     assert "A: final answer" in written.content
 
 
-async def test_condense_memory_chain_runs_memory_then_compactor():
+async def test_condense_memory_chain_runs_memory_then_compressor():
     """Memory tools are pipelined in registration order; each one's output feeds the next."""
     from unittest.mock import AsyncMock, MagicMock
 
     profile = make_profile()
     memory = fake_memory(profile)
 
-    fake_compactor = MagicMock(name="ContextCompressor")
-    fake_compactor.run = AsyncMock(side_effect=lambda msgs, **kw: msgs)
+    fake_compressor = MagicMock(name="ContextCompressor")
+    fake_compressor.run = AsyncMock(side_effect=lambda msgs, **kw: msgs)
 
     llm = ScriptedLLM([resp(content="ok")])
     config = make_test_config(
@@ -172,20 +172,20 @@ async def test_condense_memory_chain_runs_memory_then_compactor():
         llm=llm,
         memory=memory,
         tools=ToolRegistry(),
-        compactor=fake_compactor,
+        compressor=fake_compressor,
         memory_recall_top_k=0,
-        persist_outcome=False,
-        persist_trajectory=False,
+        save_outcome=False,
+        save_trajectory=False,
         reflect_after_run=False,
     )
     agent = ReActAgent(config)
-    assert agent.memory_tools == [memory, fake_compactor]
+    assert agent.memory_tools == [memory, fake_compressor]
 
     await agent.run("anything", max_steps=2)
 
     # Both tools were invoked at least once before the LLM call.
     assert memory.run.await_count >= 1
-    assert fake_compactor.run.await_count >= 1
+    assert fake_compressor.run.await_count >= 1
 
 
 async def test_condense_memory_swallows_tool_errors_and_continues():
@@ -203,8 +203,8 @@ async def test_condense_memory_swallows_tool_errors_and_continues():
         memory=memory,
         tools=ToolRegistry(),
         memory_recall_top_k=0,
-        persist_outcome=False,
-        persist_trajectory=False,
+        save_outcome=False,
+        save_trajectory=False,
         reflect_after_run=False,
     )
     agent = ReActAgent(config)
@@ -226,7 +226,7 @@ async def test_memory_run_is_invoked_on_every_loop_turn():
         memory=memory,
         tools=ToolRegistry(),
         memory_recall_top_k=3,
-        persist_outcome=False,
+        save_outcome=False,
         reflect_after_run=False,
     )
     agent = ReActAgent(config)

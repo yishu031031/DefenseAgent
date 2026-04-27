@@ -187,16 +187,16 @@ def test_spec_emits_name_description_and_input_schema() -> None:
         """Doubles x."""
         return x * 2
 
-    spec = registry.spec()
-    assert len(spec) == 1
-    entry = spec[0]
+    specs = registry.specs()
+    assert len(specs) == 1
+    entry = specs[0]
     assert set(entry.keys()) == {"name", "description", "input_schema"}
     assert entry["name"] == "foo"
     assert entry["description"] == "Doubles x."
     assert entry["input_schema"]["properties"]["x"] == {"type": "integer"}
 
 
-def test_spec_order_matches_insertion() -> None:
+def test_specs_order_matches_insertion() -> None:
     registry = ToolRegistry()
 
     @registry.tool
@@ -209,8 +209,8 @@ def test_spec_order_matches_insertion() -> None:
         """2"""
         return "2"
 
-    spec = registry.spec()
-    assert [e["name"] for e in spec] == ["first", "second"]
+    specs = registry.specs()
+    assert [e["name"] for e in specs] == ["first", "second"]
 
 
 def test_add_skill_loads_directory_tree_of_skills(tmp_path: Path) -> None:
@@ -232,7 +232,7 @@ def test_add_skill_loads_directory_tree_of_skills(tmp_path: Path) -> None:
     assert sorted(registry.names()) == ["alpha", "beta", "gamma"]
 
 
-def test_spec_for_skill_exposes_only_frontmatter(tmp_path: Path) -> None:
+def test_specs_for_skill_exposes_only_frontmatter(tmp_path: Path) -> None:
     skill_dir = tmp_path / "s"
     skill_dir.mkdir()
     (skill_dir / "SKILL.md").write_text(
@@ -241,14 +241,14 @@ def test_spec_for_skill_exposes_only_frontmatter(tmp_path: Path) -> None:
     )
     registry = ToolRegistry()
     registry.add_skill(skill_dir)
-    spec = registry.spec()
-    assert len(spec) == 1
-    assert spec[0]["name"] == "report"
-    assert spec[0]["description"] == "Make reports."
-    # Layer-2 body must NOT be in the initial spec:
-    assert "BIG LAYER 2 BODY" not in spec[0]["description"]
+    specs = registry.specs()
+    assert len(specs) == 1
+    assert specs[0]["name"] == "report"
+    assert specs[0]["description"] == "Make reports."
+    # Layer-2 body must NOT be in the initial specs:
+    assert "BIG LAYER 2 BODY" not in specs[0]["description"]
     # The skill tool must expose the optional `file` arg in its schema:
-    assert "file" in spec[0]["input_schema"]["properties"]
+    assert "file" in specs[0]["input_schema"]["properties"]
 
 
 # ---------- execute() ----------

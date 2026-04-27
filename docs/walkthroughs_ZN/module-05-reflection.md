@@ -17,7 +17,7 @@ reflector = Reflector(memory, llm, num_insights=3, reflection_importance=8.0)
 score = await reflector.score_importance("Got stuck on problem 3 for an hour.")
 
 # Synthesize higher-level insights (Park §3.2.2)
-insights = await reflector.check_and_reflect()  # no-op if below threshold
+insights = await reflector.maybe_reflect()  # no-op if below threshold
 forced   = await reflector.reflect_now()        # force it, returns records
 ```
 
@@ -37,7 +37,7 @@ Park 等人 2023 年的洞察是：**当智能体周期性地对近期经验进�
 
 1. **基于 LLM 的重要性评分** —— 在 1–10 的量表上评估一条观察有多深刻。调用方在调用 `memory.remember(importance=score)` 时使用该分值。
 2. **反思综合** —— 读取最近的非反思记忆，提示 LLM 产出 `N` 条高层洞察，将每条作为新的 `kind="reflection"` 记录存储，重要性可配置。
-3. **基于计数的触发逻辑** —— `check_and_reflect()` 在未反思的观察数达到 `profile.cognitive.reflection_threshold` 之前都是空操作。
+3. **基于计数的触发逻辑** —— `maybe_reflect()` 在未反思的观察数达到 `profile.cognitive.reflection_threshold` 之前都是空操作。
 
 ---
 
@@ -235,10 +235,10 @@ def _recent_unreflected(self) -> list[MemoryRecord]:
 1. **排除反思。** 防止无限递归——存入一条反思不应将计数器抬高到足以触发另一次反思。
 2. **只计算截止时间之后的记录。** `_last_reflection_time` 初始为 `None`（尚未反思），因此一切都计入；一次反思之后，截止时间推进到"现在"；只有时间戳严格更晚的记录才计入。
 
-#### `check_and_reflect()` —— 软触发
+#### `maybe_reflect()` —— 软触发
 
 ```python
-async def check_and_reflect(self) -> list[MemoryRecord]:
+async def maybe_reflect(self) -> list[MemoryRecord]:
     threshold = self.memory.profile.cognitive.reflection_threshold
     if self.unreflected_count < threshold:
         return []
@@ -283,7 +283,7 @@ async def reflect_now(self) -> list[MemoryRecord]:
 
 1. **`self._last_reflection_time` 是在 `remember()` 调用之后推进的，而不是之前。** 新的反思记录在截止时间推进之前获取时间戳，这意味着截止时间的更新会正确地把它们排除在**下一个**周期之外（它们的时间戳将 `<= cutoff`，而过滤器要求 `> cutoff`）。
 
-2. **即使输出为空，截止时间也会推进。** 如果 LLM 返回了无效内容，解析产出 0 条洞察，`stored` 为 `[]`，但 `_last_reflection_time` 仍然推进。否则，每一次后续的 `check_and_reflect()` 调用都会重新尝试同一批次、重新调用 LLM、重新得到无效结果，永无止境。静默失败可以接受；重试风暴不可接受。
+2. **即使输出为空，截止时间也会推进。** 如果 LLM 返回了无效内容，解析产出 0 条洞察，`stored` 为 `[]`，但 `_last_reflection_time` 仍然推进。否则，每一次后续的 `maybe_reflect()` 调用都会重新尝试同一批次、重新调用 LLM、重新得到无效结果，永无止境。静默失败可以接受；重试风暴不可接受。
 
 #### `_format_memories_for_prompt()`
 
@@ -388,7 +388,7 @@ $ python scripts/reflection_demo.py
 | `score_importance` | 4 | LLM 集成、无效输入时用默认值、`LLMProviderError` 传播、使用 temperature=0 |
 | `unreflected_count` | 4 | 空流、忽略反思、反思后重置、遵循时间戳截止 |
 | `reflect_now` | 6 | 解析并存储 N 条洞察、容忍项目符号、无近期记录时返回空、空响应时仍推进截止时间、不会重复计数自身反思、尊重配置的重要性 |
-| `check_and_reflect` | 4 | 低于阈值空操作、达到阈值触发、高于阈值触发、直到有新观察才不再空操作 |
+| `maybe_reflect` | 4 | 低于阈值空操作、达到阈值触发、高于阈值触发、直到有新观察才不再空操作 |
 | Integration | 1 | 反思可通过 `memory.recall()` 与观察一起被检索到 |
 
 **合计 33 项测试。** 全部离线。桩 `_StubLLMAdapter` 从队列中返回预设响应；桩 `_StubEmbedder` 按内容分配确定性向量。
@@ -403,7 +403,7 @@ $ python scripts/reflection_demo.py
 
 - **没有新的错误类。** 在生产中，反思唯一可能"失败"的方式是 `LLMProviderError` 从 LLM 调用传播出来。解析失败是静默且可恢复的。增加 `ReflectionError` 层次结构只会是多余的抽象。
 
-- **空响应时仍推进截止时间的规则可防止重试风暴。** 这是唯一不那么直观的不变量：产出零条洞察的反思*依然*会让时钟前进。若无此规则，每次后续的 `check_and_reflect()` 都会发现同一批未反思记录、调用 LLM、得到无效结果，并不断重复——在生产中就是一台账单机器。测试 `test_reflect_now_advances_cutoff_even_on_empty_response` 锁定了这一点。
+- **空响应时仍推进截止时间的规则可防止重试风暴。** 这是唯一不那么直观的不变量：产出零条洞察的反思*依然*会让时钟前进。若无此规则，每次后续的 `maybe_reflect()` 都会发现同一批未反思记录、调用 LLM、得到无效结果，并不断重复——在生产中就是一台账单机器。测试 `test_reflect_now_advances_cutoff_even_on_empty_response` 锁定了这一点。
 
 - **自带 Memory、自带 LLM。** `Reflector.__init__` 接受 `memory: Memory` 和 `llm: LLM`，对二者的构造方式不作任何假设。这让该类既易于测试，也易于组合——未来的 `Agent` 类只需构建一个并注入。
 

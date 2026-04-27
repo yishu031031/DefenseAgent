@@ -1,4 +1,4 @@
-"""Tests for DefenseAgent.reflection — Reflector + parsers, all offline via mocked DefaultMemory."""
+"""Tests for DefenseAgent.reflection — Reflector + parsers, all offline via mocked Mem0Memory."""
 from datetime import datetime, timezone
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
@@ -65,7 +65,7 @@ def _stub_memory(
     *,
     records: list[dict[str, Any]] | None = None,
 ) -> Any:
-    """Build a MagicMock standing in for DefaultMemory: profile + get_all returning canned records + AsyncMock add()."""
+    """Build a MagicMock standing in for Mem0Memory: profile + get_all returning canned records + AsyncMock add()."""
     mem = MagicMock()
     mem.profile = profile
     mem.get_all = MagicMock(return_value=list(records or []))
@@ -202,25 +202,25 @@ async def test_reflector_unreflected_count_excludes_reflections():
     assert reflector.unreflected_count == 2
 
 
-async def test_reflector_check_and_reflect_below_threshold_is_noop():
+async def test_reflector_maybe_reflect_below_threshold_is_noop():
     profile = _profile(reflection_threshold=5)
     records = [{"memory": f"obs {i}", "memory_type": "observation"} for i in range(3)]
     memory = _stub_memory(profile, records=records)
     reflector = Reflector(memory, _stub_llm(), clock=_fixed_clock)
 
-    result = await reflector.check_and_reflect()
+    result = await reflector.maybe_reflect()
     assert result == []
     memory.add.assert_not_called()
 
 
-async def test_reflector_check_and_reflect_above_threshold_writes_back():
+async def test_reflector_maybe_reflect_above_threshold_writes_back():
     profile = _profile(reflection_threshold=2)
     records = [{"memory": f"obs {i}", "memory_type": "observation"} for i in range(3)]
     memory = _stub_memory(profile, records=records)
     llm = _stub_llm(["I learn best when I struggle first.\nI prefer quiet study spaces."])
     reflector = Reflector(memory, llm, num_insights=2, clock=_fixed_clock)
 
-    stored = await reflector.check_and_reflect()
+    stored = await reflector.maybe_reflect()
     assert len(stored) == 2
     assert stored[0]["memory_type"] == "reflection"
     assert "struggle first" in stored[0]["memory"]

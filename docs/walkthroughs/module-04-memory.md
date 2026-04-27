@@ -6,7 +6,7 @@
 >
 > ### Current state in 5 lines
 >
-> - `DefenseAgent.memory.DefaultMemory(ms_agent.DefaultMemory)` — front door; wraps mem0. `await memory.add(messages, memory_type=...)` to ingest, `memory.search_records(query, limit, memory_type)` to retrieve, `await memory.run(messages)` for ms-agent's combined ingest+search+inject contract.
+> - `DefenseAgent.memory.Mem0Memory(ms_agent.DefaultMemory)` — front door; wraps mem0. `await memory.add(messages, memory_type=...)` to ingest, `memory.search_records(query, limit, memory_type)` to retrieve, `await memory.run(messages)` for ms-agent's combined ingest+search+inject contract.
 > - `DefenseAgent.memory.ContextCompressor(ms_agent.ContextCompressor)` — token-overflow compaction (prune tool outputs + LLM summary).
 > - `DefenseAgent.memory.SharedMemoryManager(ms_agent.SharedMemoryManager)` — process-wide singleton.
 > - `DefenseAgent.memory._bridge` — `profile_to_dictconfig()` (AgentProfile → omegaconf.DictConfig) and `messages_ours_to_theirs()` / `messages_theirs_to_ours()` (DefenseAgent.Message ↔ ms_agent.Message field copy at the boundary).

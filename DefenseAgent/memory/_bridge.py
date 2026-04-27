@@ -16,7 +16,7 @@ from DefenseAgent.llm.types import ToolCall
 @dataclass
 class MemoryBackendConfig:
     """Pure-code description of mem0's LLM + embedder providers — what env vars
-    used to supply implicitly. Pass one of these to `DefaultMemory.from_kwargs`
+    used to supply implicitly. Pass one of these to `Mem0Memory.create`
     (or `profile_to_dictconfig`'s `backend=` kwarg) to bypass the .env path
     entirely. SDK callers, tests, and multi-tenant servers should use this."""
 
@@ -40,7 +40,7 @@ def profile_to_dictconfig(
     run_id: str = "default_run",
     storage_path: str | Path | None = None,
 ) -> Any:
-    """Translate our pydantic AgentProfile into the OmegaConf DictConfig that ms-agent's Memory subclasses read; carries the ready-to-use `mem0_config` dict so DefenseAgent.DefaultMemory can bypass ms-agent's hardcoded service-URL translation. Two LLM/embedder shapes coexist on the config: a flat one at `config.llm` for ms-agent's ContextCompressor (which reads `config.llm.model` / `config.llm.openai_api_key` etc.), and a nested mem0-shape inside `config.mem0_config` for `mem0.Memory.from_config()`. Pass `backend=` for pure-code construction; omit it to fall back to env-variable resolution."""
+    """Translate our pydantic AgentProfile into the OmegaConf DictConfig that ms-agent's Memory subclasses read; carries the ready-to-use `mem0_config` dict so DefenseAgent.Mem0Memory can bypass ms-agent's hardcoded service-URL translation. Two LLM/embedder shapes coexist on the config: a flat one at `config.llm` for ms-agent's ContextCompressor (which reads `config.llm.model` / `config.llm.openai_api_key` etc.), and a nested mem0-shape inside `config.mem0_config` for `mem0.Memory.from_config()`. Pass `backend=` for pure-code construction; omit it to fall back to env-variable resolution."""
     if backend is None:
         backend = _backend_from_env()
     resolved_path = _resolve_storage_path(profile, storage_path)

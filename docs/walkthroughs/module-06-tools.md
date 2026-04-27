@@ -14,7 +14,7 @@ from DefenseAgent.tools import ToolRegistry
 # Typical case — build the whole registry from the agent's profile:
 profile = AgentProfile.from_yaml("agents/maya_rodriguez/profile.yaml")
 async with await ToolRegistry.from_profile(profile) as registry:
-    tools_for_llm = registry.spec()                  # → [{name, description, input_schema}, ...]
+    tools_for_llm = registry.specs()                 # → [{name, description, input_schema}, ...]
     results = await registry.execute(tool_calls)     # → [Message(role="tool", ...)]
 
 # Or register things by hand:

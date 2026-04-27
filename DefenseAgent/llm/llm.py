@@ -26,7 +26,7 @@ class LLM:
         self.adapter = adapter
 
     @classmethod
-    def from_kwargs(
+    def create(
         cls,
         *,
         provider: str,
@@ -78,7 +78,7 @@ class LLM:
         """Build an LLM by resolving AGENT_LAB_LLM_PROVIDER + per-provider env block from .env.
 
         Convenience wrapper: parses environment variables, then defers all
-        actual instantiation to `from_kwargs`.
+        actual instantiation to `create`.
         """
         return cls.from_profile(profile=None, dotenv_path=dotenv_path, load_env=load_env)
 
@@ -119,7 +119,7 @@ class LLM:
             llm_cfg.model if llm_cfg is not None else None,
             env_model,
         )
-        return cls.from_kwargs(
+        return cls.create(
             provider=provider,
             api_key=api_key or "",
             base_url=base_url or None,

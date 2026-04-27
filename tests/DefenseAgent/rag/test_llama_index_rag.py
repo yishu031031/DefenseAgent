@@ -104,7 +104,7 @@ def test_rag_base_abc_re_exported():
 
     assert issubclass(RAGConfigError, RAGError)
     assert issubclass(RAGProviderError, RAGError)
-    assert RAG.__abstractmethods__ >= {"add_documents", "retrieve", "query"}
+    assert RAG.__abstractmethods__ >= {"add_documents", "retrieve", "answer"}
 
 
 # ---------- bridge: profile_to_rag_dictconfig ----------

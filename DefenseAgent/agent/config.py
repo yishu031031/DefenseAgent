@@ -3,8 +3,8 @@
 `AgentConfig` is the single argument every agent strategy accepts. It bundles
 the agent's identity (the YAML profile or a pre-built `AgentProfile`) with
 on/off switches for every optional subsystem (tools, memory, reflection, RAG,
-context compactor, logger) and the per-strategy knobs (`memory_recall_top_k`,
-`persist_outcome`, `reflect_after_run`, ...).
+context compressor, logger) and the per-strategy knobs (`memory_recall_top_k`,
+`save_outcome`, `reflect_after_run`, ...).
 
 Typical use:
 
@@ -30,7 +30,7 @@ from typing import Any, Callable
 
 from DefenseAgent.config.profile import AgentProfile
 from DefenseAgent.llm.llm import LLM
-from DefenseAgent.memory import ContextCompressor, DefaultMemory, MemoryBackendConfig
+from DefenseAgent.memory import ContextCompressor, Mem0Memory, MemoryBackendConfig
 from DefenseAgent.ops import AgentLogger
 from DefenseAgent.reflection import Reflector
 from DefenseAgent.tools import ToolRegistry
@@ -59,7 +59,7 @@ class AgentConfig:
         appear, and only if their respective subsystems are also enabled.
 
     use_memory:
-        Build mem0-backed `DefaultMemory`, enable the `memory_recall`
+        Build mem0-backed `Mem0Memory`, enable the `memory_recall`
         built-in tool, and persist outcomes/trajectories. When False, the
         agent runs stateless — no recall, no persistence, no reflection.
 
@@ -74,7 +74,7 @@ class AgentConfig:
         `profile.rag.enabled`. When on, the `rag_search` built-in tool is
         registered and `LlamaIndexRAG` is built lazily on the first `run()`.
 
-    use_compactor:
+    use_compressor:
         Build a `ContextCompressor` and chain it after memory in the
         condense_memory pipeline.
 
@@ -99,17 +99,17 @@ class AgentConfig:
         Default `top_k` for the agent-owned `memory_recall` tool when the
         LLM does not specify one. Set to 0 to suppress recall entirely.
 
-    persist_outcome:
+    save_outcome:
         After each `run()`, write a (Q → A) pair to memory tagged
         `memory_type='outcome'` (or `'failure'` on error paths). Auto-disabled
         when `use_memory=False`.
 
-    persist_trajectory:
+    save_trajectory:
         Per ReAct tool turn, write a one-line summary of every (call → result)
         tagged `memory_type='trajectory'`. Auto-disabled when `use_memory=False`.
 
     reflect_after_run:
-        Call `Reflector.check_and_reflect` after each `run()`. Auto-disabled
+        Call `Reflector.maybe_reflect` after each `run()`. Auto-disabled
         when `use_reflection=False` or `use_memory=False`.
 
     extra_instructions:
@@ -135,7 +135,7 @@ class AgentConfig:
     use_memory: bool = True
     use_reflection: bool = True
     use_rag: bool | None = None
-    use_compactor: bool = True
+    use_compressor: bool = True
     use_logger: bool = True
 
     # tool wiring
@@ -145,8 +145,8 @@ class AgentConfig:
 
     # behavior knobs
     memory_recall_top_k: int = 5
-    persist_outcome: bool = True
-    persist_trajectory: bool = True
+    save_outcome: bool = True
+    save_trajectory: bool = True
     reflect_after_run: bool = True
     extra_instructions: str | None = None
 
@@ -161,11 +161,11 @@ class AgentConfig:
     # env-driven construction path for that component. Lets SDK callers,
     # tests, and multi-LLM apps bypass .env entirely.
     llm: LLM | None = None
-    memory: DefaultMemory | None = None
-    tools_registry: ToolRegistry | None = None
+    memory: Mem0Memory | None = None
+    tool_registry: ToolRegistry | None = None
     logger: AgentLogger | None = None
     reflector: Reflector | None = None       # bypass Reflector(memory, llm) construction
-    compactor: ContextCompressor | None = None  # bypass auto-build of compactor
+    compressor: ContextCompressor | None = None  # bypass auto-build of compressor
     rag: Any | None = None                   # pre-built LlamaIndexRAG (or compatible duck-type)
 
     # Programmatic mem0 backend — controls the *internal* LLM/embedder mem0

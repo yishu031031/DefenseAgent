@@ -3,7 +3,7 @@ from typing import Any, Callable
 
 from DefenseAgent.llm import LLM
 from DefenseAgent.llm.types import Message
-from DefenseAgent.memory import DefaultMemory
+from DefenseAgent.memory import Mem0Memory
 from DefenseAgent.memory._bridge import record_memory_type
 from DefenseAgent.ops.logger import _default_clock
 from DefenseAgent.reflection.scorer import ImportanceScorer
@@ -14,11 +14,11 @@ _REFLECTION_MEMORY_TYPE = "reflection"
 
 
 class Reflector:
-    """Module 5's facade: ImportanceScorer + InsightSynthesizer over a mem0-backed DefaultMemory; tags reflections via memory_type."""
+    """Module 5's facade: ImportanceScorer + InsightSynthesizer over a mem0-backed `Mem0Memory`; tags reflections via memory_type."""
 
     def __init__(
         self,
-        memory: DefaultMemory,
+        memory: Mem0Memory,
         llm: LLM,
         *,
         scorer: ImportanceScorer | None = None,
@@ -45,8 +45,8 @@ class Reflector:
         """Count non-reflection mem0 records added since the last reflection cutoff."""
         return len(self._get_unreflected_records())
 
-    async def check_and_reflect(self) -> list[dict[str, Any]]:
-        """Trigger reflection only when unreflected_count >= profile.cognitive.reflection_threshold."""
+    async def maybe_reflect(self) -> list[dict[str, Any]]:
+        """Reflect only when unreflected_count >= profile.cognitive.reflection_threshold; otherwise no-op."""
         threshold = self.memory.profile.cognitive.reflection_threshold
         if self.unreflected_count < threshold:
             return []

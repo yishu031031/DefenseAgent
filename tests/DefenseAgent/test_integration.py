@@ -4,7 +4,7 @@ Sections:
   • Config + LLM              — profile fields flow into adapter.chat()
   • Config + LLM + Logger     — wrap adapter calls with logger events
   • Config + Tools            — agent-bundle skill/MCP layout end-to-end
-  • Config + Memory + Agent   — full-stack flow with mocked DefaultMemory
+  • Config + Memory + Agent   — full-stack flow with mocked Mem0Memory
 """
 import json
 import logging
@@ -233,11 +233,11 @@ async def test_tools_from_profile_loads_example_bundle_skill():
     async with await ToolRegistry.from_profile(profile) as registry:
         assert registry.names() == ["tabular-report"]
 
-        spec = registry.spec()
-        assert spec[0]["name"] == "tabular-report"
-        assert "Render a list" in spec[0]["description"]
-        assert "render_table" not in spec[0]["description"]
-        assert "file" in spec[0]["input_schema"]["properties"]
+        specs = registry.specs()
+        assert specs[0]["name"] == "tabular-report"
+        assert "Render a list" in specs[0]["description"]
+        assert "render_table" not in specs[0]["description"]
+        assert "file" in specs[0]["input_schema"]["properties"]
 
 
 async def test_tools_from_profile_serves_layer_2_body_from_disk():
@@ -295,12 +295,12 @@ async def test_tools_from_profile_rejects_path_escape_as_tool_error():
 
 
 # ============================================================
-# Full-stack integration with mocked DefaultMemory
+# Full-stack integration with mocked Mem0Memory
 # ============================================================
 
 
 async def test_full_stack_profile_memory_tools_compose(monkeypatch):
-    """Agent bundle drives profile → DefaultMemory (mocked) → ToolRegistry → ReActAgent."""
+    """Agent bundle drives profile → Mem0Memory (mocked) → ToolRegistry → ReActAgent."""
     monkeypatch.setenv("AGENT_LAB_LLM_PROVIDER", "deepseek")
     monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-test")
     monkeypatch.setenv("DEEPSEEK_BASE_URL", "https://api.example.com")
@@ -312,7 +312,7 @@ async def test_full_stack_profile_memory_tools_compose(monkeypatch):
 
     profile = AgentProfile.from_yaml(_example_profile_path())
 
-    from DefenseAgent.memory.default_memory import DefaultMemory
+    from DefenseAgent.memory.mem0_memory import Mem0Memory
     from DefenseAgent.agent import ReActAgent
 
     fake_mem0 = MagicMock(name="mem0")
@@ -321,7 +321,7 @@ async def test_full_stack_profile_memory_tools_compose(monkeypatch):
     fake_mem0.add.return_value = None
 
     with patch.object(
-        DefaultMemory,
+        Mem0Memory,
         "_init_memory_obj",
         return_value=fake_mem0,
     ):
@@ -330,7 +330,7 @@ async def test_full_stack_profile_memory_tools_compose(monkeypatch):
     try:
         # The agent has the right composed pieces.
         assert agent.profile is profile
-        assert isinstance(agent.memory, DefaultMemory)
+        assert isinstance(agent.memory, Mem0Memory)
         assert "tabular-report" in agent.tools
         assert agent.reflector is not None
     finally:

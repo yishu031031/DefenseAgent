@@ -131,7 +131,7 @@ class Agent(ABC):
         self.logger = logger
 ```
 
-Minimal — the subclasses add their own strategy knobs (`memory_recall_top_k`, `persist_outcome`, etc.) via `super().__init__(...)`.
+Minimal — the subclasses add their own strategy knobs (`memory_recall_top_k`, `save_outcome`, etc.) via `super().__init__(...)`.
 
 ### 4.3 `Agent.from_profile` — one classmethod, inherited by both concrete agents
 
@@ -167,12 +167,12 @@ def _memory_block(self, memories):
 async def _recall_memories(self, query, top_k):
     return [] if top_k <= 0 else await self.memory.recall(query, top_k=top_k)
 
-async def _persist_outcome(self, task, answer):
+async def _save_outcome(self, task, answer):
     await self.memory.remember(f"Q: {task}\nA: {answer}", kind="observation")
 
 async def _maybe_reflect(self):
     if self.reflector is not None:
-        await self.reflector.check_and_reflect()
+        await self.reflector.maybe_reflect()
 
 def _log(self, level, event_type, message, **data):
     if self.logger is None: return
@@ -225,7 +225,7 @@ async def run(self, task, *, max_steps=None):
 
         # plain-text answer → finalize
         steps.append(AgentStep(kind="answer", content=response.content, usage=response.usage))
-        if self.persist_outcome:   await self._persist_outcome(task, response.content)
+        if self.save_outcome:   await self._save_outcome(task, response.content)
         if self.reflect_after_run: await self._maybe_reflect()
         return AgentResult(task, response.content, steps, total)
 
@@ -258,8 +258,8 @@ Constructor args the subclass adds on top of the base wiring:
 | Knob | Default | Purpose |
 |---|---|---|
 | `memory_recall_top_k` | 5 | How many memories to inject into the system prompt. 0 disables recall. |
-| `persist_outcome` | True | Whether to `memory.remember("Q: ...\nA: ...")` after a successful run. |
-| `reflect_after_run` | True | Whether to call `reflector.check_and_reflect()` after a successful run. |
+| `save_outcome` | True | Whether to `memory.remember("Q: ...\nA: ...")` after a successful run. |
+| `reflect_after_run` | True | Whether to call `reflector.maybe_reflect()` after a successful run. |
 | `extra_instructions` | None | Appended to the system prompt — useful for task-specific framing without subclassing. |
 
 ---
@@ -299,7 +299,7 @@ async def run(self, task, *, max_steps=None):
     )
     steps.append(AgentStep(kind="answer", content=synthesis.content))
 
-    if self.persist_outcome:   await self._persist_outcome(task, synthesis.content)
+    if self.save_outcome:   await self._save_outcome(task, synthesis.content)
     if self.reflect_after_run: await self._maybe_reflect()
     return AgentResult(task, synthesis.content, steps, total)
 ```
@@ -351,7 +351,7 @@ The sub-loop is essentially a tiny ReAct cycle. Each planned step gets a **fresh
 |---|---|---|
 | `memory_recall_top_k` | 5 | How many memories to inject at plan + synthesis time. |
 | `max_substeps_per_step` | 3 | LLM-call budget per planned step. |
-| `persist_outcome` | True | Same as ReAct. |
+| `save_outcome` | True | Same as ReAct. |
 | `reflect_after_run` | True | Same as ReAct. |
 
 ---
@@ -392,7 +392,7 @@ Three behavioral gaps surfaced in review and are now fixed. Each maps to a concr
 
 **Before:** `memory.recall(task)` ran once at the start; the recalled bullet list went into the system prompt and never changed. Step-5 searching for hotels couldn't find "user prefers Marriott in 国贸" because the query that retrieved memories was step-0's "plan a trip."
 
-**Now:** The Agent exposes a built-in tool named `memory_recall` alongside the user's `ToolRegistry`. The LLM sees it in every `registry.spec()` payload and calls it with whatever query the current step needs.
+**Now:** The Agent exposes a built-in tool named `memory_recall` alongside the user's `ToolRegistry`. The LLM sees it in every `registry.specs()` payload and calls it with whatever query the current step needs.
 
 Three helpers on `Agent`:
 
@@ -417,14 +417,14 @@ The upfront prime stays — `_build_system_prompt` still recalls `memory_recall_
 
 ### 9.2 Per-step trajectory persistence (not per call)
 
-**Before:** `persist_outcome=True` recorded only the final answer. Intermediate tool calls + their results were lost, so future runs couldn't retrieve past approaches.
+**Before:** `save_outcome=True` recorded only the final answer. Intermediate tool calls + their results were lost, so future runs couldn't retrieve past approaches.
 
 **First cut (per-call):** one memory write per `(tool_call, tool_result)` pair. Rejected — a single LLM turn with 3 concurrent tool calls triggered 3 embedding-API calls and 3 DB writes.
 
 **Now (per-step):** ONE observation per step summarizing every call in that step:
 
 ```python
-async def _persist_trajectory(self, *, task, step_index, tool_calls, tool_results):
+async def _save_trajectory(self, *, task, step_index, tool_calls, tool_results):
     pair_parts = []
     for tc, tr in zip(tool_calls, tool_results):
         pair_parts.append(
@@ -468,20 +468,20 @@ async def run(self, task, *, max_steps=None):
         # main loop / phases
         ...
         # success path:
-        if self.persist_outcome:
-            await self._persist_outcome(task, answer)    # importance=5.0 default
+        if self.save_outcome:
+            await self._save_outcome(task, answer)    # importance=5.0 default
         return AgentResult(...)
     except AgentStepLimitError:                          # ReAct
-        if self.persist_outcome:
-            await self._persist_outcome(
+        if self.save_outcome:
+            await self._save_outcome(
                 task,
                 f"FAILED: exceeded max_steps={cap}",
                 importance=6.0,
             )
         raise
     except AgentError as e:                              # Plan-and-Solve
-        if self.persist_outcome:
-            await self._persist_outcome(
+        if self.save_outcome:
+            await self._save_outcome(
                 task,
                 f"FAILED: {truncate(str(e), 200)}",
                 importance=6.0,
@@ -506,8 +506,8 @@ Two specific guarantees:
 | File | Tests | Focus |
 |---|---|---|
 | `test_memory_recall_tool.py` | 7 | Tool appears in combined spec, user tools first then built-ins, end-to-end invocation with hits, empty-match diagnostic, empty-query handling, top_k clamping, order-preservation across mixed user+agent tool calls |
-| `test_react_trajectory_and_reflection.py` | 10 | One-record-per-step, multi-call consolidation, `tool_names` metadata list, trajectory_importance defaults to 5.0, failure outcome persisted on `AgentStepLimitError` with `FAILED:` prefix + importance 6.0, persist_outcome=False disables both outcome writes, reflection fires on success, on max_steps, failure survives a raising reflector on both paths, reflect_after_run=False skips reflection everywhere |
+| `test_react_trajectory_and_reflection.py` | 10 | One-record-per-step, multi-call consolidation, `tool_names` metadata list, trajectory_importance defaults to 5.0, failure outcome persisted on `AgentStepLimitError` with `FAILED:` prefix + importance 6.0, save_outcome=False disables both outcome writes, reflection fires on success, on max_steps, failure survives a raising reflector on both paths, reflect_after_run=False skips reflection everywhere |
 
-Plus `test_plan_and_solve.py` gained two tests for the PS-side failure-outcome path (bad plan → FAILED outcome + importance 6.0, and `persist_outcome=False` suppresses it).
+Plus `test_plan_and_solve.py` gained two tests for the PS-side failure-outcome path (bad plan → FAILED outcome + importance 6.0, and `save_outcome=False` suppresses it).
 
 **All offline via the ScriptedLLM stub.** Full suite: **443 passed**.

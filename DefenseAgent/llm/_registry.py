@@ -1,7 +1,7 @@
 """Internal: provider-name → adapter-class registry plus field validation.
 
 Private module (leading underscore) — users construct LLMs via
-`LLM.from_kwargs(provider=...)` or `LLM.from_env()`, never by importing
+`LLM.create(provider=...)` or `LLM.from_env()`, never by importing
 from here.
 
 Adapter classes are imported lazily inside `_resolve_adapter`: only the

@@ -1,4 +1,4 @@
-"""Tests for DefenseAgent.memory.DefaultMemory (mem0-backed adapter inherited from ms-agent's class).
+"""Tests for DefenseAgent.memory.Mem0Memory (mem0-backed adapter inherited from ms-agent's `DefaultMemory`).
 
 The full mem0 stack pulls qdrant + an LLM + an embedder, none of which we want to spin up in unit tests.
 We mock mem0.Memory.from_config so the adapter's wiring (config translation + Message-boundary conversion + memory_type filtering)
@@ -21,7 +21,7 @@ _EXAMPLE_PROFILE = (
 
 
 def _set_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Populate the env vars DefaultMemory's config translator reads."""
+    """Populate the env vars Mem0Memory's config translator reads."""
     monkeypatch.setenv("AGENT_LAB_LLM_PROVIDER", "deepseek")
     monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-test")
     monkeypatch.setenv("DEEPSEEK_BASE_URL", "https://api.example.com")
@@ -33,8 +33,8 @@ def _set_env(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def _build_memory(profile: AgentProfile) -> Any:
-    """Construct a DefaultMemory whose internal mem0 client is a MagicMock — patched at ms-agent's _init_memory_obj seam."""
-    from DefenseAgent.memory.default_memory import DefaultMemory
+    """Construct a Mem0Memory whose internal mem0 client is a MagicMock — patched at ms-agent's _init_memory_obj seam."""
+    from DefenseAgent.memory.mem0_memory import Mem0Memory
 
     fake_mem0 = MagicMock(name="mem0.Memory")
     fake_mem0.add.return_value = None
@@ -42,11 +42,11 @@ def _build_memory(profile: AgentProfile) -> Any:
     fake_mem0.get_all.return_value = {"results": []}
 
     with patch.object(
-        DefaultMemory,
+        Mem0Memory,
         "_init_memory_obj",
         return_value=fake_mem0,
     ):
-        memory = DefaultMemory(profile, load_env=False)
+        memory = Mem0Memory(profile, load_env=False)
     memory._fake_mem0 = fake_mem0
     return memory
 
@@ -65,11 +65,11 @@ def _make_profile(tmp_path: Path) -> AgentProfile:
 # ---------- inheritance contract ----------
 
 
-def test_default_memory_inherits_from_ms_agent_default_memory():
+def test_mem0_memory_inherits_from_ms_agent_default_memory():
     from ms_agent.memory.default_memory import DefaultMemory as MsDefaultMemory
-    from DefenseAgent.memory.default_memory import DefaultMemory
+    from DefenseAgent.memory.mem0_memory import Mem0Memory
 
-    assert issubclass(DefaultMemory, MsDefaultMemory)
+    assert issubclass(Mem0Memory, MsDefaultMemory)
 
 
 def test_context_compressor_inherits_from_ms_agent():
@@ -98,7 +98,7 @@ def test_memory_mapping_is_re_exported():
 # ---------- construction + config translation ----------
 
 
-def test_default_memory_construction_resolves_storage_under_profile_source_dir(
+def test_mem0_memory_construction_resolves_storage_under_profile_source_dir(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ):
     _set_env(monkeypatch)
@@ -111,21 +111,21 @@ def test_default_memory_construction_resolves_storage_under_profile_source_dir(
     assert (tmp_path / "memory").exists()
 
 
-def test_default_memory_explicit_storage_path_overrides_profile(
+def test_mem0_memory_explicit_storage_path_overrides_profile(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ):
     _set_env(monkeypatch)
     profile = _make_profile(tmp_path)
     custom = tmp_path / "elsewhere"
 
-    from DefenseAgent.memory.default_memory import DefaultMemory
+    from DefenseAgent.memory.mem0_memory import Mem0Memory
 
     fake_mem0 = MagicMock()
     fake_mem0.add.return_value = None
     fake_mem0.search.return_value = {"results": []}
     fake_mem0.get_all.return_value = {"results": []}
     with patch("mem0.Memory.from_config", return_value=fake_mem0):
-        memory = DefaultMemory(profile, storage_path=custom, load_env=False)
+        memory = Mem0Memory(profile, storage_path=custom, load_env=False)
 
     assert Path(memory.output_dir) == custom.resolve()
 
@@ -137,10 +137,10 @@ def test_construction_raises_without_llm_env(
     monkeypatch.delenv("AGENT_LAB_LLM_PROVIDER", raising=False)
     profile = _make_profile(tmp_path)
 
-    from DefenseAgent.memory.default_memory import DefaultMemory
+    from DefenseAgent.memory.mem0_memory import Mem0Memory
 
     with pytest.raises(ValueError, match="AGENT_LAB_LLM_PROVIDER"):
-        DefaultMemory(profile, load_env=False)
+        Mem0Memory(profile, load_env=False)
 
 
 def test_construction_raises_without_embedding_env(
@@ -153,10 +153,10 @@ def test_construction_raises_without_embedding_env(
     monkeypatch.delenv("EMBEDDING_MODEL", raising=False)
     profile = _make_profile(tmp_path)
 
-    from DefenseAgent.memory.default_memory import DefaultMemory
+    from DefenseAgent.memory.mem0_memory import Mem0Memory
 
     with pytest.raises(ValueError, match="EMBEDDING_"):
-        DefaultMemory(profile, load_env=False)
+        Mem0Memory(profile, load_env=False)
 
 
 # ---------- public API methods ----------
@@ -195,7 +195,7 @@ async def test_run_search_no_hits_returns_input_unchanged(
 async def test_run_is_a_passthrough_in_defenseagent(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ):
-    """DefenseAgent.DefaultMemory.run() returns messages unchanged — the LLM accesses memory through the built-in `memory_recall` tool, not via passive system-prompt injection (which would collide with BaseAgent's `system=` kwarg)."""
+    """DefenseAgent.Mem0Memory.run() returns messages unchanged — the LLM accesses memory through the built-in `memory_recall` tool, not via passive system-prompt injection (which would collide with BaseAgent's `system=` kwarg)."""
     _set_env(monkeypatch)
     profile = _make_profile(tmp_path)
     memory = _build_memory(profile)
@@ -292,11 +292,11 @@ def test_get_all_filters_results_by_memory_type(
 def test_mem0_search_failures_propagate(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ):
-    """search() inherits ms-agent's wrapper which doesn't catch mem0 errors — the agent layer's _handle_memory_recall does that instead."""
+    """search_texts() inherits ms-agent's wrapper which doesn't catch mem0 errors — the agent layer's _handle_memory_recall does that instead."""
     _set_env(monkeypatch)
     profile = _make_profile(tmp_path)
     memory = _build_memory(profile)
     memory._fake_mem0.search.side_effect = RuntimeError("network down")
 
     with pytest.raises(RuntimeError):
-        memory.search("anything")
+        memory.search_texts("anything")

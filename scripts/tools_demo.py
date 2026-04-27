@@ -8,7 +8,7 @@ This script shows, end to end:
      resolved relative to the profile's directory, so every agent's
      configuration stays completely independent.
   3. The three layers of Anthropic-style progressive disclosure:
-        Layer 1 — name + description (always in registry.spec()).
+        Layer 1 — name + description (always in registry.specs()).
         Layer 2 — SKILL.md body (returned on an empty-args invocation).
         Layer 3 — any other file in the skill directory (returned when
                   the LLM re-invokes with {"file": "relative/path"}).
@@ -78,8 +78,8 @@ async def main() -> None:
             "    )\n"
         )
 
-        _banner("LAYER 1 — registry.spec() (what the LLM sees every turn)")
-        for entry in registry.spec():
+        _banner("LAYER 1 — registry.specs() (what the LLM sees every turn)")
+        for entry in registry.specs():
             print(f"\n• {entry['name']}")
             print(f"  description: {entry['description']}")
             print(f"  input_schema: {entry['input_schema']}")

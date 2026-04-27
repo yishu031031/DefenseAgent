@@ -52,7 +52,7 @@ class PlanAndSolveAgent(BaseAgent):
         agent = PlanAndSolveAgent(config)
 
     Inject pre-built components (mocks, custom adapters) via the `llm`,
-    `memory`, `tools_registry`, `reflector`, `rag`, `logger` fields on
+    `memory`, `tool_registry`, `reflector`, `rag`, `logger` fields on
     `AgentConfig`.
     """
 
@@ -66,13 +66,13 @@ class PlanAndSolveAgent(BaseAgent):
             tools=built.tools,
             reflector=built.reflector,
             logger=built.logger,
-            compactor=built.compactor,
+            compressor=built.compressor,
             rag=built.rag,
         )
         self._config = config
         self.memory_recall_top_k = config.memory_recall_top_k
         self.max_substeps_per_step = config.max_substeps_per_step
-        self.persist_outcome = config.persist_outcome and config.use_memory
+        self.save_outcome = config.save_outcome and config.use_memory
         self.reflect_after_run = (
             config.reflect_after_run and config.use_reflection and config.use_memory
         )
@@ -170,8 +170,8 @@ class PlanAndSolveAgent(BaseAgent):
                 total_tokens=total.total_tokens,
             )
 
-            if self.persist_outcome:
-                await self._persist_outcome(task, synthesis_response.content)
+            if self.save_outcome:
+                await self._save_outcome(task, synthesis_response.content)
 
             return AgentResult(
                 task=task,
@@ -180,8 +180,8 @@ class PlanAndSolveAgent(BaseAgent):
                 usage=total,
             )
         except AgentError as e:
-            if self.persist_outcome:
-                await self._persist_outcome(
+            if self.save_outcome:
+                await self._save_outcome(
                     task,
                     f"FAILED: {truncate(str(e), 200)}",
                     memory_type=FAILURE_MEMORY_TYPE,

@@ -7,7 +7,7 @@ from DefenseAgent.agent.config import AgentConfig
 from DefenseAgent.config.profile import AgentProfile
 from DefenseAgent.llm.llm import LLM
 from DefenseAgent.llm.types import Message, TokenUsage, ToolCall
-from DefenseAgent.memory import ContextCompressor, DefaultMemory
+from DefenseAgent.memory import ContextCompressor, Mem0Memory
 from DefenseAgent.memory._bridge import record_memory_type
 from DefenseAgent.memory.base import Memory as MemoryTool
 from DefenseAgent.ops import AgentLogger
@@ -113,22 +113,22 @@ class BaseAgent(ABC):
         profile: AgentProfile,
         *,
         llm: LLM,
-        memory: DefaultMemory | None,
+        memory: Mem0Memory | None,
         tools: ToolRegistry,
         reflector: Reflector | None = None,
         logger: AgentLogger | None = None,
-        compactor: ContextCompressor | None = None,
+        compressor: ContextCompressor | None = None,
         rag: Any | None = None,
         memory_tools: list[MemoryTool] | None = None,
     ) -> None:
-        """Compose the modules; build the per-step memory chain (default order: [memory, compactor], skipping None). When `rag` is provided, the `rag_search` built-in tool is registered alongside `memory_recall`. `memory=None` runs the agent stateless: no memory_recall tool, no persistence, no condense_memory."""
+        """Compose the modules; build the per-step memory chain (default order: [memory, compressor], skipping None). When `rag` is provided, the `rag_search` built-in tool is registered alongside `memory_recall`. `memory=None` runs the agent stateless: no memory_recall tool, no persistence, no condense_memory."""
         self.profile = profile
         self.llm = llm
         self.memory = memory
         self.tools = tools
         self.reflector = reflector
         self.logger = logger
-        self.compactor = compactor
+        self.compressor = compressor
         self.rag = rag
         if memory_tools is not None:
             self.memory_tools = list(memory_tools)
@@ -136,8 +136,8 @@ class BaseAgent(ABC):
             chain: list[MemoryTool] = []
             if memory is not None:
                 chain.append(memory)
-            if compactor is not None:
-                chain.append(compactor)
+            if compressor is not None:
+                chain.append(compressor)
             self.memory_tools = chain
         self._agent_tools: dict[str, _AgentToolHandler] = {}
         if memory is not None:
@@ -302,7 +302,7 @@ class BaseAgent(ABC):
         ]
         return "Relevant memories:\n" + "\n".join(lines)
 
-    async def _persist_outcome(
+    async def _save_outcome(
         self,
         task: str,
         answer: str,
@@ -316,7 +316,7 @@ class BaseAgent(ABC):
         try:
             await self.memory.add([message], memory_type=memory_type)
         except Exception as e:
-            self._log("warn", "agent.persist_outcome_failed", str(e))
+            self._log("warn", "agent.save_outcome_failed", str(e))
 
     def _log(self, level: str, event_type: str, message: str, **data: Any) -> None:
         """Emit a structured log event; no-op when no logger is wired. Accepts 'warn' as an alias for 'warning'."""
@@ -328,7 +328,7 @@ class BaseAgent(ABC):
 
     def _combined_tool_specs(self) -> list[dict[str, Any]] | None:
         """Return user tool specs followed by Agent-owned tool specs; returns None only if both are empty."""
-        user_specs = self.tools.spec()
+        user_specs = self.tools.specs()
         builtin_specs: list[dict[str, Any]] = []
         if MEMORY_RECALL_TOOL_NAME in self._agent_tools:
             builtin_specs.append(_MEMORY_RECALL_TOOL_SPEC)
@@ -446,7 +446,7 @@ class BaseAgent(ABC):
         if self.reflector is None:
             return
         try:
-            await self.reflector.check_and_reflect()
+            await self.reflector.maybe_reflect()
         except Exception as e:
             self._log(
                 "warn",

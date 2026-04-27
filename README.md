@@ -17,13 +17,13 @@ print(result.final_answer)
 
 ## Highlights
 
-- **Provider-agnostic LLM layer.** One `LLM` facade in front of Anthropic and any OpenAI-compatible provider (DeepSeek, Qwen/DashScope, ModelScope, vLLM, Google-via-proxy). Swap by editing `.env` or by passing `LLM.from_kwargs(provider="...", api_key="...", model="...")`.
+- **Provider-agnostic LLM layer.** One `LLM` facade in front of Anthropic and any OpenAI-compatible provider (DeepSeek, Qwen/DashScope, ModelScope, vLLM, Google-via-proxy). Swap by editing `.env` or by passing `LLM.create(provider="...", api_key="...", model="...")`.
 - **Three reasoning strategies.** `SimpleAgent` (one-shot), `ReActAgent` (Yao et al. 2022 — interleaved reasoning + tool use), `PlanAndSolveAgent` (Wang et al. 2023 — plan / execute / synthesize). All share the same `AgentConfig` constructor.
 - **Persistent memory with semantic recall.** mem0 + qdrant on disk. Cross-turn `memory_recall` is exposed as a built-in LLM tool; outcomes / failures / trajectories are tagged via `memory_type` for later filtering and reflection.
 - **Multimodal RAG.** `LlamaIndexRAG` with `StructuredDocExtractor` for HTML / PDF chunking that preserves embedded images and tables. Hybrid (vector + BM25) retrieval when `fastembed` is installed.
 - **Three tool sources.** Plain Python functions (`@registry.tool`), Anthropic-style Skill bundles (a directory with `SKILL.md` + assets), and stdio MCP servers — all unified under one `ToolRegistry`.
 - **Reflection.** `Reflector` gathers unreflected memory records, asks the LLM to synthesize high-level insights, writes them back tagged `memory_type="reflection"`. Threshold-gated; never throws.
-- **One construction path.** Every agent is built from a single `AgentConfig` object — no overloaded constructors, no two-doors. Inject mocks for tests via the same `AgentConfig.llm`/`memory`/`tools_registry`/`reflector`/etc. fields.
+- **One construction path.** Every agent is built from a single `AgentConfig` object — no overloaded constructors, no two-doors. Inject mocks for tests via the same `AgentConfig.llm`/`memory`/`tool_registry`/`reflector`/etc. fields.
 
 ---
 
@@ -133,7 +133,7 @@ from DefenseAgent import AgentConfig, ReActAgent
 from DefenseAgent.llm import LLM
 from DefenseAgent.memory import MemoryBackendConfig
 
-llm = LLM.from_kwargs(
+llm = LLM.create(
     provider="anthropic", api_key="sk-...", model="claude-opus-4-7",
 )
 backend = MemoryBackendConfig(
@@ -266,7 +266,7 @@ Tests are **fully offline** — they use `make_test_config(...)` (in `tests/Defe
 ## Design Notes
 
 ### One construction path
-Every agent is built via `Agent(config)` where `config: AgentConfig`. The legacy keyword-argument constructor (`Agent(profile, llm=..., memory=..., ...)`) was removed during the v0.1 refactor — inject components through `AgentConfig.llm`/`memory`/`tools_registry`/`reflector`/`compactor`/`rag` instead.
+Every agent is built via `Agent(config)` where `config: AgentConfig`. The legacy keyword-argument constructor (`Agent(profile, llm=..., memory=..., ...)`) was removed during the v0.1 refactor — inject components through `AgentConfig.llm`/`memory`/`tool_registry`/`reflector`/`compressor`/`rag` instead.
 
 ### Two memory backends, one config object
 `MemoryBackendConfig` (pure-code) and `.env` (legacy) both produce the same `mem0` connection. SDK callers pass `AgentConfig(memory_backend=...)`; local development uses `.env`.
@@ -275,7 +275,7 @@ Every agent is built via `Agent(config)` where `config: AgentConfig`. The legacy
 `DefenseAgent.llm._registry._resolve_adapter(provider)` imports the provider SDK *inside the if-branch*. A user who only ever runs DeepSeek doesn't pay the cost of importing the `anthropic` package.
 
 ### Build phases
-`AgentConfig` → `build_components_sync(config)` (sync; LLM/memory/tools/reflector/compactor/logger) → `agent._ensure_async_setup()` (lazy; MCP servers + RAG, both of which need `await`).
+`AgentConfig` → `build_components_sync(config)` (sync; LLM/memory/tools/reflector/compressor/logger) → `agent._ensure_async_setup()` (lazy; MCP servers + RAG, both of which need `await`).
 
 ---
 

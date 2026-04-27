@@ -17,7 +17,7 @@ from typing import Any
 from DefenseAgent.agent.config import AgentConfig
 from DefenseAgent.config.profile import AgentProfile
 from DefenseAgent.llm.llm import LLM
-from DefenseAgent.memory import ContextCompressor, DefaultMemory
+from DefenseAgent.memory import ContextCompressor, Mem0Memory
 from DefenseAgent.ops import AgentLogger
 from DefenseAgent.reflection import Reflector
 from DefenseAgent.tools import ToolRegistry
@@ -28,10 +28,10 @@ class BuiltComponents:
     """Bag of fully-wired modules, ready to hand to a `BaseAgent` subclass."""
     profile: AgentProfile
     llm: LLM
-    memory: DefaultMemory | None
+    memory: Mem0Memory | None
     tools: ToolRegistry
     reflector: Reflector | None
-    compactor: ContextCompressor | None
+    compressor: ContextCompressor | None
     logger: AgentLogger | None
     rag: Any | None = None
 
@@ -53,13 +53,13 @@ def build_components_sync(config: AgentConfig) -> BuiltComponents:
         memory = config.memory
     elif config.use_memory:
         if config.memory_backend is not None:
-            memory = DefaultMemory.from_kwargs(
+            memory = Mem0Memory.create(
                 profile,
                 backend=config.memory_backend,
                 storage_path=config.storage_path,
             )
         else:
-            memory = DefaultMemory(
+            memory = Mem0Memory(
                 profile,
                 dotenv_path=config.dotenv_path,
                 load_env=False,
@@ -71,8 +71,8 @@ def build_components_sync(config: AgentConfig) -> BuiltComponents:
     # Tools: prefer injection (caller manages everything); else build from
     # profile.skills + config.tools. MCP wiring still happens in
     # async_finish_setup, also gated on injection.
-    if config.tools_registry is not None:
-        tools = config.tools_registry
+    if config.tool_registry is not None:
+        tools = config.tool_registry
     else:
         tools = ToolRegistry()
         if config.use_tools:
@@ -89,17 +89,17 @@ def build_components_sync(config: AgentConfig) -> BuiltComponents:
     else:
         reflector = None
 
-    if config.compactor is not None:
-        compactor = config.compactor
-    elif config.use_compactor:
-        compactor = ContextCompressor(
+    if config.compressor is not None:
+        compressor = config.compressor
+    elif config.use_compressor:
+        compressor = ContextCompressor(
             profile,
             load_env=False,
             storage_path=str(config.storage_path) if config.storage_path else None,
             backend=config.memory_backend,
         )
     else:
-        compactor = None
+        compressor = None
 
     # Logger: prefer injection, else build at <log_dir>/<profile.id>.log when
     # use_logger=True.
@@ -116,7 +116,7 @@ def build_components_sync(config: AgentConfig) -> BuiltComponents:
         memory=memory,
         tools=tools,
         reflector=reflector,
-        compactor=compactor,
+        compressor=compressor,
         logger=logger,
         rag=config.rag,
     )
@@ -132,11 +132,11 @@ async def async_finish_setup(
     Returns the (optional) RAG instance the caller should attach to the agent.
     Idempotency is the caller's job — invoke this at most once per agent.
 
-    When `config.tools_registry` was injected the caller manages the tool
+    When `config.tool_registry` was injected the caller manages the tool
     surface; we skip MCP server registration to avoid clobbering their setup.
     Likewise when `config.rag` is pre-injected we skip the LlamaIndexRAG build.
     """
-    if config.use_tools and config.tools_registry is None and profile.tools.mcp:
+    if config.use_tools and config.tool_registry is None and profile.tools.mcp:
         await tools.add_mcp_servers(list(profile.tools.mcp))
 
     if config.rag is not None:

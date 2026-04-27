@@ -2,7 +2,7 @@
 
 Asserts that `ReActAgent(config)` / `SimpleAgent(config)` / `PlanAndSolveAgent(config)`
 build a working agent without manual component wiring, and that the toggles
-(`use_memory`, `use_reflection`, `use_compactor`, `use_logger`, `use_tools`)
+(`use_memory`, `use_reflection`, `use_compressor`, `use_logger`, `use_tools`)
 flip the right modules on/off.
 """
 from pathlib import Path
@@ -11,7 +11,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from DefenseAgent import AgentConfig, PlanAndSolveAgent, ReActAgent, SimpleAgent
-from DefenseAgent.agent import RAG_SEARCH_TOOL_NAME, MEMORY_RECALL_TOOL_NAME
+from DefenseAgent.agent.base import RAG_SEARCH_TOOL_NAME, MEMORY_RECALL_TOOL_NAME
 
 from tests.DefenseAgent.agent._support import make_profile
 
@@ -30,9 +30,9 @@ def _set_env(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def _build_with_mocked_mem0(cls, config: AgentConfig):
     """Construct an agent with mem0 patched out so no real DB is touched."""
-    from DefenseAgent.memory.default_memory import DefaultMemory
+    from DefenseAgent.memory.mem0_memory import Mem0Memory
     with patch.object(
-        DefaultMemory, "_init_memory_obj", return_value=MagicMock(name="mem0"),
+        Mem0Memory, "_init_memory_obj", return_value=MagicMock(name="mem0"),
     ):
         return cls(config)
 
@@ -47,7 +47,7 @@ def test_react_agent_from_config_wires_every_component(monkeypatch: pytest.Monke
     assert agent.memory is not None
     assert agent.tools is not None
     assert agent.reflector is not None
-    assert agent.compactor is not None
+    assert agent.compressor is not None
     assert agent._config is config
 
 
@@ -70,32 +70,32 @@ def test_use_memory_false_disables_memory_subsystem(monkeypatch: pytest.MonkeyPa
         load_env=False,
         use_memory=False,
         use_reflection=False,
-        use_compactor=False,
+        use_compressor=False,
         use_logger=False,
     )
-    # No mem0 patch needed — DefaultMemory should not even be constructed.
+    # No mem0 patch needed — Mem0Memory should not even be constructed.
     agent = ReActAgent(config)
 
     assert agent.memory is None
     assert agent.reflector is None
     assert MEMORY_RECALL_TOOL_NAME not in agent._agent_tools
-    assert agent.persist_outcome is False
-    assert agent.persist_trajectory is False
+    assert agent.save_outcome is False
+    assert agent.save_trajectory is False
     assert agent.reflect_after_run is False
 
 
-def test_use_compactor_and_logger_toggles(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+def test_use_compressor_and_logger_toggles(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     _set_env(monkeypatch)
     config = AgentConfig(
         profile=make_profile(),
         load_env=False,
-        use_compactor=False,
+        use_compressor=False,
         use_logger=False,
         storage_path=tmp_path,
     )
     agent = _build_with_mocked_mem0(ReActAgent, config)
 
-    assert agent.compactor is None
+    assert agent.compressor is None
     assert agent.logger is None
 
 

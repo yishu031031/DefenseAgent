@@ -18,7 +18,7 @@ class SimpleAgent(BaseAgent):
         agent = SimpleAgent(config)
 
     Inject pre-built components (mocks, custom adapters) via the `llm`,
-    `memory`, `tools_registry`, `reflector`, `rag`, `logger` fields on
+    `memory`, `tool_registry`, `reflector`, `rag`, `logger` fields on
     `AgentConfig`.
     """
 
@@ -32,11 +32,11 @@ class SimpleAgent(BaseAgent):
             tools=built.tools,
             reflector=built.reflector,
             logger=built.logger,
-            compactor=built.compactor,
+            compressor=built.compressor,
             rag=built.rag,
         )
         self._config = config
-        self.persist_outcome = config.persist_outcome and config.use_memory
+        self.save_outcome = config.save_outcome and config.use_memory
         self.reflect_after_run = (
             config.reflect_after_run and config.use_reflection and config.use_memory
         )
@@ -68,8 +68,8 @@ class SimpleAgent(BaseAgent):
                 "info", "agent.answer", "LLM produced final answer",
                 total_tokens=response.usage.total_tokens,
             )
-            if self.persist_outcome:
-                await self._persist_outcome(task, response.content)
+            if self.save_outcome:
+                await self._save_outcome(task, response.content)
             return AgentResult(
                 task=task,
                 final_answer=response.content,
@@ -77,8 +77,8 @@ class SimpleAgent(BaseAgent):
                 usage=response.usage,
             )
         except Exception as e:
-            if self.persist_outcome:
-                await self._persist_outcome(
+            if self.save_outcome:
+                await self._save_outcome(
                     task,
                     f"FAILED: {type(e).__name__}: {e}",
                     memory_type=FAILURE_MEMORY_TYPE,

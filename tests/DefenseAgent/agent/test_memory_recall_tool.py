@@ -1,7 +1,8 @@
 """Tests for the Agent-owned memory_recall tool — the live memory access the LLM can call mid-loop."""
 import pytest
 
-from DefenseAgent.agent import MEMORY_RECALL_TOOL_NAME, ReActAgent
+from DefenseAgent.agent import ReActAgent
+from DefenseAgent.agent.base import MEMORY_RECALL_TOOL_NAME
 from DefenseAgent.llm.types import ToolCall
 
 from DefenseAgent.tools import ToolRegistry
@@ -85,8 +86,8 @@ async def test_llm_can_invoke_memory_recall_and_receive_hits():
     )
     agent = ReActAgent(make_test_config(
         profile=profile, llm=llm, memory=memory, tools=ToolRegistry(),
-        memory_recall_top_k=0, persist_outcome=False,
-        persist_trajectory=False, reflect_after_run=False,
+        memory_recall_top_k=0, save_outcome=False,
+        save_trajectory=False, reflect_after_run=False,
     ))
 
     result = await agent.run("study location?", max_steps=5)
@@ -118,8 +119,8 @@ async def test_memory_recall_empty_returns_diagnostic_not_crash():
     )
     agent = ReActAgent(make_test_config(
         profile=profile, llm=llm, memory=memory, tools=ToolRegistry(),
-        memory_recall_top_k=0, persist_outcome=False,
-        persist_trajectory=False, reflect_after_run=False,
+        memory_recall_top_k=0, save_outcome=False,
+        save_trajectory=False, reflect_after_run=False,
     ))
 
     result = await agent.run("q", max_steps=3)
@@ -147,8 +148,8 @@ async def test_memory_recall_empty_query_is_handled_gracefully():
     )
     agent = ReActAgent(make_test_config(
         profile=profile, llm=llm, memory=memory, tools=ToolRegistry(),
-        memory_recall_top_k=0, persist_outcome=False,
-        persist_trajectory=False, reflect_after_run=False,
+        memory_recall_top_k=0, save_outcome=False,
+        save_trajectory=False, reflect_after_run=False,
     ))
     result = await agent.run("q", max_steps=3)
     tool_result_step = next(s for s in result.steps if s.kind == "tool_result")
@@ -213,8 +214,8 @@ async def test_dispatch_preserves_order_across_user_and_agent_tools():
     )
     agent = ReActAgent(make_test_config(
         profile=profile, llm=llm, memory=memory, tools=registry,
-        memory_recall_top_k=0, persist_outcome=False,
-        persist_trajectory=False, reflect_after_run=False,
+        memory_recall_top_k=0, save_outcome=False,
+        save_trajectory=False, reflect_after_run=False,
     ))
     result = await agent.run("multi", max_steps=3)
     tool_result_step = next(s for s in result.steps if s.kind == "tool_result")

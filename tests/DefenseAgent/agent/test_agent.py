@@ -96,7 +96,7 @@ async def test_async_context_manager_closes_on_exit():
             memory=fake_memory(profile),
             tools=ToolRegistry(),
             memory_recall_top_k=0,
-            persist_outcome=False,
+            save_outcome=False,
             reflect_after_run=False,
         ))
     async with agent as managed:
@@ -109,11 +109,11 @@ async def test_async_context_manager_closes_on_exit():
 
 
 async def _patched_from_profile(cls, profile: AgentProfile):
-    """Run cls.from_profile with DefaultMemory's mem0 init patched out."""
-    from DefenseAgent.memory.default_memory import DefaultMemory
+    """Run cls.from_profile with Mem0Memory's mem0 init patched out."""
+    from DefenseAgent.memory.mem0_memory import Mem0Memory
 
     with patch.object(
-        DefaultMemory,
+        Mem0Memory,
         "_init_memory_obj",
         return_value=MagicMock(name="mem0"),
     ):
@@ -162,7 +162,7 @@ async def test_from_profile_skips_rag_when_disabled(monkeypatch: pytest.MonkeyPa
     agent = await _patched_from_profile(ReActAgent, profile)
     try:
         assert agent.rag is None
-        from DefenseAgent.agent import RAG_SEARCH_TOOL_NAME
+        from DefenseAgent.agent.base import RAG_SEARCH_TOOL_NAME
         assert RAG_SEARCH_TOOL_NAME not in agent._agent_tools
     finally:
         await agent.close()
@@ -179,12 +179,12 @@ async def test_from_profile_builds_rag_when_enabled(monkeypatch: pytest.MonkeyPa
     fake_rag = MagicMock(name="LlamaIndexRAG")
     fake_rag.retrieve = AsyncMock(return_value=[])
 
-    from DefenseAgent.memory.default_memory import DefaultMemory
+    from DefenseAgent.memory.mem0_memory import Mem0Memory
     from DefenseAgent.rag.llama_index_rag import LlamaIndexRAG
-    from DefenseAgent.agent import RAG_SEARCH_TOOL_NAME
+    from DefenseAgent.agent.base import RAG_SEARCH_TOOL_NAME
 
     with patch.object(
-        DefaultMemory, "_init_memory_obj", return_value=MagicMock(name="mem0"),
+        Mem0Memory, "_init_memory_obj", return_value=MagicMock(name="mem0"),
     ):
         with patch.object(
             LlamaIndexRAG, "from_profile", AsyncMock(return_value=fake_rag),

@@ -17,7 +17,7 @@ reflector = Reflector(memory, llm, num_insights=3, reflection_importance=8.0)
 score = await reflector.score_importance("Got stuck on problem 3 for an hour.")
 
 # Synthesize higher-level insights (Park §3.2.2)
-insights = await reflector.check_and_reflect()  # no-op if below threshold
+insights = await reflector.maybe_reflect()  # no-op if below threshold
 forced   = await reflector.reflect_now()        # force it, returns records
 ```
 
@@ -37,7 +37,7 @@ The insight from Park et al. 2023 is that **memory quality compounds when the ag
 
 1. **LLM-based importance scoring** — rate how poignant an observation is on a 1–10 scale. Caller uses the score when calling `memory.remember(importance=score)`.
 2. **Reflection synthesis** — read recent non-reflection memories, prompt the LLM for `N` high-level insights, store each as a new `kind="reflection"` record with configurable importance.
-3. **Count-based trigger logic** — `check_and_reflect()` is a no-op until unreflected observations reach `profile.cognitive.reflection_threshold`.
+3. **Count-based trigger logic** — `maybe_reflect()` is a no-op until unreflected observations reach `profile.cognitive.reflection_threshold`.
 
 ---
 
@@ -235,10 +235,10 @@ Two filters:
 1. **Exclude reflections.** Prevents infinite regress — the act of storing a reflection shouldn't bump the counter enough to trigger another.
 2. **Only count records after the cutoff.** `_last_reflection_time` starts as `None` (no reflection yet), so everything counts. After a reflection, the cutoff advances to "now"; only records with strictly later timestamps count.
 
-#### `check_and_reflect()` — the soft trigger
+#### `maybe_reflect()` — the soft trigger
 
 ```python
-async def check_and_reflect(self) -> list[MemoryRecord]:
+async def maybe_reflect(self) -> list[MemoryRecord]:
     threshold = self.memory.profile.cognitive.reflection_threshold
     if self.unreflected_count < threshold:
         return []
@@ -283,7 +283,7 @@ async def reflect_now(self) -> list[MemoryRecord]:
 
 1. **`self._last_reflection_time` advances *after* the `remember()` calls, not before.** The new reflection records get timestamps before the cutoff advances, which means the cutoff update correctly excludes them from the NEXT cycle (their timestamps will be `<= cutoff`, the filter requires `> cutoff`).
 
-2. **Cutoff advances even on empty output.** If the LLM returns garbage and parsing yields 0 insights, `stored` is `[]` but `_last_reflection_time` still advances. Otherwise, every subsequent `check_and_reflect()` call would re-attempt the same batch, re-call the LLM, re-get garbage, forever. Silent failure is acceptable; a retry storm isn't.
+2. **Cutoff advances even on empty output.** If the LLM returns garbage and parsing yields 0 insights, `stored` is `[]` but `_last_reflection_time` still advances. Otherwise, every subsequent `maybe_reflect()` call would re-attempt the same batch, re-call the LLM, re-get garbage, forever. Silent failure is acceptable; a retry storm isn't.
 
 #### `_format_memories_for_prompt()`
 
@@ -388,7 +388,7 @@ $ python scripts/reflection_demo.py
 | `score_importance` | 4 | LLM integration, default on garbage, `LLMProviderError` propagation, uses temperature=0 |
 | `unreflected_count` | 4 | empty stream, ignores reflections, resets after a reflection, timestamp cutoff honored |
 | `reflect_now` | 6 | parses + stores N insights, tolerates bullets, empty-on-no-recent, advances cutoff on empty response, doesn't double-count own reflections, configured importance honored |
-| `check_and_reflect` | 4 | below threshold no-op, at-threshold triggers, above-threshold triggers, noop until fresh observations |
+| `maybe_reflect` | 4 | below threshold no-op, at-threshold triggers, above-threshold triggers, noop until fresh observations |
 | Integration | 1 | Reflections retrievable via `memory.recall()` alongside observations |
 
 **33 tests total.** All offline. Stub `_StubLLMAdapter` returns canned responses from a queue; stub `_StubEmbedder` assigns deterministic vectors per content.
@@ -403,7 +403,7 @@ $ python scripts/reflection_demo.py
 
 - **No new error class.** The only way reflection can "fail" in production is `LLMProviderError` propagating from the LLM call. Parsing failures are silent + recoverable. Adding a `ReflectionError` hierarchy would be dead abstraction.
 
-- **The cutoff-advancing-on-empty-response rule prevents retry storms.** This is the one non-obvious invariant: a reflection that produces zero insights *still* advances the clock. Without this, every subsequent `check_and_reflect()` would find the same unreflected batch, call the LLM, get garbage, and repeat — a bill-builder in production. The test `test_reflect_now_advances_cutoff_even_on_empty_response` locks this in.
+- **The cutoff-advancing-on-empty-response rule prevents retry storms.** This is the one non-obvious invariant: a reflection that produces zero insights *still* advances the clock. Without this, every subsequent `maybe_reflect()` would find the same unreflected batch, call the LLM, get garbage, and repeat — a bill-builder in production. The test `test_reflect_now_advances_cutoff_even_on_empty_response` locks this in.
 
 - **Bring-your-own-Memory, bring-your-own-LLM.** `Reflector.__init__` takes `memory: Memory` and `llm: LLM` with no opinion about how either was constructed. This makes the class trivially testable and trivially composable — the future `Agent` class just builds one and injects.
 
