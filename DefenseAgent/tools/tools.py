@@ -1,12 +1,12 @@
 import asyncio
 import inspect
 from pathlib import Path
-from typing import Any, Awaitable, Callable
+from typing import TYPE_CHECKING, Any, Awaitable, Callable
 
-from DefenseAgent.config.profile import AgentProfile
+from DefenseAgent.config.profile import AgentProfile, MCPServerConfig
 from DefenseAgent.llm.types import Message, ToolCall
+from DefenseAgent.skills import SkillLoader
 from DefenseAgent.tools.mcp import MCPClient
-from DefenseAgent.tools.skill import Skill
 from DefenseAgent.tools.types import (
     Tool,
     ToolError,
@@ -15,6 +15,10 @@ from DefenseAgent.tools.types import (
     ToolNotFoundError,
     ToolRegistrationError,
 )
+
+
+if TYPE_CHECKING:
+    from DefenseAgent.skills.container import SkillContainer
 
 
 _PY_TYPE_TO_JSON: dict[type, str] = {
@@ -33,7 +37,8 @@ class ToolRegistry:
     def __init__(self) -> None:
         """Start with an empty registry; use as an async context manager to auto-close MCP clients."""
         self._tools: dict[str, Tool] = {}
-        self._mcp_clients: list[MCPClient] = []
+        self._mcp_client: MCPClient | None = None
+        self._skill_container: "SkillContainer | None" = None
 
     async def __aenter__(self) -> "ToolRegistry":
         """Return self for `async with ToolRegistry() as registry:` style lifecycle management."""
@@ -50,7 +55,7 @@ class ToolRegistry:
         *,
         base_dir: str | Path | None = None,
     ) -> "ToolRegistry":
-        """Build a ToolRegistry from `profile.tools`, resolving skill paths against `base_dir` (defaults to the profile's directory)."""
+        """Build a ToolRegistry from `profile.tools`, resolving skill paths against `base_dir` (defaults to the profile's directory). When `profile.tools.allow_skill_execution` is True, a `SkillContainer` is constructed (local subprocess mode, timeout from `profile.tools.skill_execution_timeout`) and every script bundled in a skill becomes an additional executable Tool. All MCP server entries get folded into a single multi-server client opened in one connect()."""
         registry = cls()
         if base_dir is None:
             if profile.source_dir is None:
@@ -61,16 +66,16 @@ class ToolRegistry:
             base = profile.source_dir
         else:
             base = Path(base_dir).resolve()
+        container = None
+        if profile.tools.allow_skill_execution and profile.tools.skills:
+            from DefenseAgent.skills import SkillContainer
+            container = SkillContainer(timeout=profile.tools.skill_execution_timeout)
+            registry._skill_container = container
         for skill_ref in profile.tools.skills:
             skill_path = (base / skill_ref).resolve()
-            registry.add_skill(skill_path)
-        for mcp_cfg in profile.tools.mcp:
-            await registry.add_mcp(
-                command=mcp_cfg.command,
-                args=mcp_cfg.args,
-                env=mcp_cfg.env,
-                cwd=mcp_cfg.cwd,
-            )
+            registry.add_skill(skill_path, container=container)
+        if profile.tools.mcp:
+            await registry.add_mcp_servers(profile.tools.mcp)
         return registry
 
     def tool(
@@ -100,28 +105,83 @@ class ToolRegistry:
             return register
         return register(func)
 
-    def add_skill(self, directory: str | Path) -> Tool:
-        """Load an Anthropic Agent Skill from `directory` (must contain SKILL.md) and register it as one Tool."""
-        skill = Skill(directory)
-        tool = skill.to_tool()
-        self.register(tool)
-        return tool
+    def add_skill(
+        self,
+        directory: str | Path,
+        *,
+        container: "SkillContainer | None" = None,
+    ) -> list[Tool]:
+        """Load every skill rooted at `directory` via a fresh SkillLoader (parity with ms-agent: a `directory/SKILL.md` file is loaded as a single skill, otherwise every immediate subdirectory containing SKILL.md is walked). Each loaded SkillSchema becomes a read-only Tool. When `container` is provided, every script in `schema.scripts` additionally becomes an executable Tool dispatched through the container. Idempotent — already-registered tool names are skipped. Raises ToolRegistrationError when ms-agent's loader finds nothing usable."""
+        loader = SkillLoader()
+        loader.load_skills(str(directory))
+        tools = loader.to_tools(container=container)
+        if not tools:
+            raise ToolRegistrationError(
+                f"no skills loaded from {directory!r} — directory missing SKILL.md "
+                f"or every candidate failed to parse"
+            )
+        registered: list[Tool] = []
+        for tool in tools:
+            if tool.name in self._tools:
+                continue
+            self.register(tool)
+            registered.append(tool)
+        return registered
 
     async def add_mcp(
         self,
         *,
-        command: str,
+        name: str | None = None,
+        command: str | None = None,
         args: list[str] | None = None,
         env: dict[str, str] | None = None,
         cwd: str | None = None,
+        url: str | None = None,
+        transport: str | None = None,
+        headers: dict[str, str] | None = None,
+        timeout: float | None = None,
+        sse_read_timeout: float | None = None,
+        include: list[str] | None = None,
+        exclude: list[str] | None = None,
     ) -> list[Tool]:
-        """Connect to an MCP stdio server, discover its tools, register each, and return them."""
-        client = MCPClient(command=command, args=args, env=env, cwd=cwd)
-        self._mcp_clients.append(client)
-        discovered = await client.enter()
+        """Connect a single MCP server (stdio if `command` set; sse/websocket/streamable_http if `url` set) and register every discovered tool. Convenience wrapper over `add_mcp_servers` for one-off launches."""
+        cfg = MCPServerConfig(
+            name=name,
+            command=command,
+            args=args or [],
+            env=env,
+            cwd=cwd,
+            url=url,
+            transport=transport,
+            headers=headers,
+            timeout=timeout,
+            sse_read_timeout=sse_read_timeout,
+            include=include or [],
+            exclude=exclude or [],
+        )
+        return await self.add_mcp_servers([cfg])
+
+    async def add_mcp_servers(self, servers: list[MCPServerConfig]) -> list[Tool]:
+        """Translate a list of MCPServerConfig into the `mcpServers` dict shape, attach them to the (single) underlying multi-server client, connect, then register every discovered tool. Safe to call multiple times — each call extends the existing client via `add_mcp_config`."""
+        if not servers:
+            return []
+        mcp_servers: dict[str, dict[str, Any]] = {}
+        for cfg in servers:
+            entry_name = cfg.name or _default_server_name(cfg, mcp_servers)
+            mcp_servers[entry_name] = _server_config_to_mcp_dict(cfg)
+        if self._mcp_client is None:
+            self._mcp_client = MCPClient(mcp_config={"mcpServers": mcp_servers})
+            await self._mcp_client.connect()
+        else:
+            await self._mcp_client.add_mcp_config({"mcpServers": mcp_servers})
+        discovered = await self._mcp_client.discover_tools()
+        new_tools: list[Tool] = []
         for tool in discovered:
+            if tool.name in self._tools:
+                continue
             self.register(tool)
-        return discovered
+            new_tools.append(tool)
+        return new_tools
 
     def register(self, tool: Tool) -> None:
         """Add a pre-built Tool to the registry; raises ToolRegistrationError on name collision."""
@@ -177,10 +237,10 @@ class ToolRegistry:
         )
 
     async def close(self) -> None:
-        """Close every MCP client that was opened by this registry."""
-        for client in self._mcp_clients:
-            await client.close()
-        self._mcp_clients.clear()
+        """Close the underlying multi-server MCP client (if any)."""
+        if self._mcp_client is not None:
+            await self._mcp_client.cleanup()
+            self._mcp_client = None
 
     def names(self) -> list[str]:
         """Return the registered tool names in insertion order."""
@@ -224,3 +284,46 @@ def _wrap_python_handler(func: Callable[..., Any]) -> ToolHandler:
             result = await asyncio.to_thread(lambda: func(**arguments))
         return result if isinstance(result, str) else str(result)
     return handler
+
+
+def _default_server_name(cfg: MCPServerConfig, taken: dict[str, Any]) -> str:
+    """Pick a stable, human-readable server name when the config didn't supply one. Stdio servers default to the binary name (e.g. `uvx`); url servers default to the host. Collisions are disambiguated with a numeric suffix."""
+    if cfg.command:
+        base = Path(cfg.command).name or "stdio_server"
+    elif cfg.url:
+        base = cfg.url.split("//", 1)[-1].split("/", 1)[0] or "remote_server"
+    else:
+        base = "mcp_server"
+    candidate = base
+    suffix = 2
+    while candidate in taken:
+        candidate = f"{base}_{suffix}"
+        suffix += 1
+    return candidate
+
+
+def _server_config_to_mcp_dict(cfg: MCPServerConfig) -> dict[str, Any]:
+    """Translate one MCPServerConfig into the per-server dict ms-agent's MCPClient consumes. Drops None / empty-list fields so ms-agent's `connect_to_server(**server)` doesn't see unsupported kwargs."""
+    out: dict[str, Any] = {}
+    if cfg.command:
+        out["command"] = cfg.command
+        out["args"] = list(cfg.args)
+        if cfg.env is not None:
+            out["env"] = dict(cfg.env)
+        if cfg.cwd is not None:
+            out["cwd"] = cfg.cwd
+    if cfg.url:
+        out["url"] = cfg.url
+        if cfg.headers is not None:
+            out["headers"] = dict(cfg.headers)
+    if cfg.transport:
+        out["transport"] = cfg.transport
+    if cfg.timeout is not None:
+        out["timeout"] = cfg.timeout
+    if cfg.sse_read_timeout is not None:
+        out["sse_read_timeout"] = cfg.sse_read_timeout
+    if cfg.include:
+        out["include"] = list(cfg.include)
+    if cfg.exclude:
+        out["exclude"] = list(cfg.exclude)
+    return out

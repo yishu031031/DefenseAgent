@@ -116,6 +116,82 @@ def test_mcp_entry_rejects_empty_command(tmp_path: Path) -> None:
         AgentProfile.from_yaml(path)
 
 
+# ---------- multi-transport MCP entries ----------
+
+
+def test_mcp_entry_accepts_url_only_with_sse_transport(tmp_path: Path) -> None:
+    """url-mode entries set transport + url + headers; no command/args required."""
+    yaml_text = _MINIMAL_YAML + (
+        "  tools:\n"
+        "    mcp:\n"
+        "      - transport: sse\n"
+        "        url: https://mcp.example.com/sse\n"
+        "        headers:\n"
+        "          Authorization: Bearer token\n"
+        "        timeout: 30\n"
+    )
+    path = tmp_path / "p.yaml"
+    path.write_text(yaml_text, encoding="utf-8")
+    profile = AgentProfile.from_yaml(path)
+    (entry,) = profile.tools.mcp
+    assert entry.transport == "sse"
+    assert entry.url == "https://mcp.example.com/sse"
+    assert entry.headers == {"Authorization": "Bearer token"}
+    assert entry.timeout == 30
+    assert entry.command is None
+
+
+def test_mcp_entry_rejects_both_command_and_url(tmp_path: Path) -> None:
+    """A server entry must be either stdio (command) or remote (url), never both."""
+    bad = _MINIMAL_YAML + (
+        "  tools:\n"
+        "    mcp:\n"
+        "      - command: uvx\n"
+        "        args: [x]\n"
+        "        url: https://example.com\n"
+    )
+    path = tmp_path / "p.yaml"
+    path.write_text(bad, encoding="utf-8")
+    with pytest.raises(ConfigValidationError):
+        AgentProfile.from_yaml(path)
+
+
+def test_mcp_entry_rejects_neither_command_nor_url(tmp_path: Path) -> None:
+    bad = _MINIMAL_YAML + "  tools:\n    mcp:\n      - args: [x]\n"
+    path = tmp_path / "p.yaml"
+    path.write_text(bad, encoding="utf-8")
+    with pytest.raises(ConfigValidationError):
+        AgentProfile.from_yaml(path)
+
+
+def test_mcp_entry_rejects_include_and_exclude_together(tmp_path: Path) -> None:
+    bad = _MINIMAL_YAML + (
+        "  tools:\n"
+        "    mcp:\n"
+        "      - command: uvx\n"
+        "        args: [x]\n"
+        "        include: [a]\n"
+        "        exclude: [b]\n"
+    )
+    path = tmp_path / "p.yaml"
+    path.write_text(bad, encoding="utf-8")
+    with pytest.raises(ConfigValidationError):
+        AgentProfile.from_yaml(path)
+
+
+def test_mcp_entry_rejects_unknown_transport_value(tmp_path: Path) -> None:
+    bad = _MINIMAL_YAML + (
+        "  tools:\n"
+        "    mcp:\n"
+        "      - transport: bogus\n"
+        "        url: https://example.com\n"
+    )
+    path = tmp_path / "p.yaml"
+    path.write_text(bad, encoding="utf-8")
+    with pytest.raises(ConfigValidationError):
+        AgentProfile.from_yaml(path)
+
+
 # ---------- source_path tracking ----------
 
 

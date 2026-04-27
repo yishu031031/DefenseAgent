@@ -1,210 +1,194 @@
-"""Tests for DefenseAgent.tools.skill.
+"""Tests for DefenseAgent.skills — the SkillLoader subclass and the SkillSchema → Tool conversion.
 
-Covers the three-layer progressive disclosure of an Anthropic-style Agent Skill:
-  Layer 1 — frontmatter (name + description) is eagerly parsed.
-  Layer 2 — SKILL.md body is returned when the handler is called with no `file`.
-  Layer 3 — any file inside the skill root is returned when called with `{"file": ...}`.
-Also covers error cases: missing SKILL.md, bad frontmatter, path escapes.
+We inherit ms-agent's `SkillLoader` for the parsing/discovery surface, so its existing tests cover frontmatter handling, registry semantics, etc. These tests focus on what DefenseAgent adds:
+  • The ms-agent loader is reachable through our subclass (load + scan trees + registry).
+  • `to_tools()` converts every loaded `SkillSchema` into a Tool with the right metadata.
+  • The runtime tool handler returns the body when called with no `file`, looks up files by basename, by relative path, and rejects path-escape / non-string args.
 """
 import asyncio
 from pathlib import Path
 
 import pytest
 
-from DefenseAgent.tools import Skill, SkillLoadError
+from DefenseAgent.skills import SkillLoader, SkillLoadError, SkillSchema
 
 
 def _write_skill(
-    root: Path,
+    directory: Path,
     *,
     name: str = "tabular-report",
     description: str = "Produces a markdown table from a row list.",
     body: str = "# Tabular Report\n\nSee scripts/generate.py for the full implementation.\n",
     extras: dict[str, str] | None = None,
 ) -> Path:
-    """Create a minimal Skill dir with SKILL.md + optional extra files; returns the dir path."""
-    root.mkdir(parents=True, exist_ok=True)
+    """Write a minimal SKILL.md skill (plus optional extra files) and return its directory."""
+    directory.mkdir(parents=True, exist_ok=True)
     frontmatter = f"---\nname: {name}\ndescription: {description}\n---\n\n"
-    (root / "SKILL.md").write_text(frontmatter + body, encoding="utf-8")
+    (directory / "SKILL.md").write_text(frontmatter + body, encoding="utf-8")
     if extras is not None:
         for rel_path, content in extras.items():
-            target = root / rel_path
+            target = directory / rel_path
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text(content, encoding="utf-8")
-    return root
+    return directory
 
 
-# ---------- Layer 1: frontmatter ----------
+# ---------- inherited loader surface ----------
 
 
-def test_skill_reads_name_and_description_from_frontmatter(tmp_path: Path) -> None:
-    skill_dir = _write_skill(tmp_path / "s")
-    skill = Skill(skill_dir)
-    assert skill.name == "tabular-report"
-    assert skill.description == "Produces a markdown table from a row list."
+def test_loader_loads_single_skill_directory(tmp_path: Path) -> None:
+    skill_dir = _write_skill(tmp_path / "tabular")
+    loader = SkillLoader()
+    loaded = loader.load_skills(str(skill_dir))
+    assert len(loaded) == 1
+    schema = next(iter(loaded.values()))
+    assert isinstance(schema, SkillSchema)
+    assert schema.name == "tabular-report"
+    assert schema.description.startswith("Produces a markdown table")
+    # SkillLoader's internal registry is keyed by `{skill_id}@{version}`.
+    assert any(key.endswith("@latest") for key in loader.list_skills())
 
 
-def test_skill_to_tool_exposes_only_frontmatter(tmp_path: Path) -> None:
-    skill_dir = _write_skill(tmp_path / "s", body="SECRET LAYER 2 BODY\n")
-    tool = Skill(skill_dir).to_tool()
+def test_loader_walks_immediate_subdirs_when_root_has_no_skill_md(tmp_path: Path) -> None:
+    """Mirrors ms-agent's `SkillLoader._scan_and_load_skills` — if root has no SKILL.md, walk children."""
+    root = tmp_path / "skills"
+    _write_skill(root / "alpha", name="alpha")
+    _write_skill(root / "beta", name="beta")
+    (root / "not_a_skill").mkdir()
+
+    loader = SkillLoader()
+    loaded = loader.load_skills(str(root))
+    names = sorted(s.name for s in loaded.values())
+    assert names == ["alpha", "beta"]
+
+
+def test_loader_skips_invalid_skills_silently(tmp_path: Path) -> None:
+    """ms-agent's parser returns None on bad SKILL.md; the wrapper just skips. Unlike our previous strict mode, no SkillLoadError is raised here."""
+    root = tmp_path / "skills"
+    _write_skill(root / "good", name="good")
+    bad = root / "broken"
+    bad.mkdir(parents=True)
+    (bad / "SKILL.md").write_text("not yaml at all", encoding="utf-8")
+
+    loader = SkillLoader()
+    loaded = loader.load_skills(str(root))
+    names = sorted(s.name for s in loaded.values())
+    assert names == ["good"]
+
+
+# ---------- SkillSchema → Tool conversion ----------
+
+
+def test_to_tools_returns_one_tool_per_loaded_skill(tmp_path: Path) -> None:
+    skill_dir = _write_skill(
+        tmp_path / "tabular",
+        extras={"scripts/generate.py": "print('hi')\n"},
+    )
+    loader = SkillLoader()
+    loader.load_skills(str(skill_dir))
+
+    tools = loader.to_tools()
+    assert len(tools) == 1
+    tool = tools[0]
     assert tool.name == "tabular-report"
-    assert tool.description == "Produces a markdown table from a row list."
+    assert tool.description.startswith("Produces a markdown table")
     assert tool.source == "skill"
-    assert "SECRET" not in tool.description
-    assert tool.input_schema["type"] == "object"
+    assert tool.metadata["skill_id"]
+    assert tool.metadata["version"] == "latest"
+    assert tool.metadata["skill_path"] == str(skill_dir.resolve())
     assert "file" in tool.input_schema["properties"]
 
 
-def test_skill_description_is_trimmed(tmp_path: Path) -> None:
-    skill_dir = _write_skill(tmp_path / "s", name="  padded  ", description="  hello  ")
-    skill = Skill(skill_dir)
-    assert skill.name == "padded"
-    assert skill.description == "hello"
+# ---------- runtime handler ----------
 
 
-# ---------- Layer 2: body ----------
+def test_handler_returns_skill_body_when_no_file_arg(tmp_path: Path) -> None:
+    skill_dir = _write_skill(
+        tmp_path / "tabular",
+        body="# How to write a table\n\nUse generate.py.\n",
+    )
+    loader = SkillLoader()
+    loader.load_skills(str(skill_dir))
+    tool = loader.to_tools()[0]
+
+    body = asyncio.run(tool.handler({}))
+    assert "How to write a table" in body
+    # The frontmatter must be stripped.
+    assert "---" not in body.splitlines()[0]
+    assert "name: tabular-report" not in body
 
 
-def test_handler_returns_body_when_file_arg_is_absent(tmp_path: Path) -> None:
-    body = "# Instructions\n\nStep 1.\nStep 2.\n"
-    skill_dir = _write_skill(tmp_path / "s", body=body)
-    skill = Skill(skill_dir)
-    result = asyncio.run(skill._handle({}))
-    assert result == body
+def test_handler_returns_skill_body_when_file_is_skill_md(tmp_path: Path) -> None:
+    skill_dir = _write_skill(tmp_path / "s", body="BODY-ONE\n")
+    loader = SkillLoader()
+    loader.load_skills(str(skill_dir))
+    tool = loader.to_tools()[0]
+
+    out = asyncio.run(tool.handler({"file": "SKILL.md"}))
+    assert "BODY-ONE" in out
 
 
-def test_handler_returns_body_when_file_arg_is_empty_string(tmp_path: Path) -> None:
-    body = "# Instructions\n"
-    skill_dir = _write_skill(tmp_path / "s", body=body)
-    skill = Skill(skill_dir)
-    result = asyncio.run(skill._handle({"file": ""}))
-    assert result == body
-
-
-def test_body_property_matches_handler_body(tmp_path: Path) -> None:
-    body = "# Title\n\nBody line.\n"
-    skill_dir = _write_skill(tmp_path / "s", body=body)
-    skill = Skill(skill_dir)
-    assert skill.body == body
-
-
-# ---------- Layer 3: on-demand file reads ----------
-
-
-def test_handler_reads_subfile_inside_skill(tmp_path: Path) -> None:
+def test_handler_resolves_file_by_basename(tmp_path: Path) -> None:
     skill_dir = _write_skill(
         tmp_path / "s",
-        extras={"scripts/generate.py": "print('hello')\n"},
+        extras={"scripts/generate.py": "print('go')\n"},
     )
-    skill = Skill(skill_dir)
-    content = asyncio.run(skill._handle({"file": "scripts/generate.py"}))
-    assert content == "print('hello')\n"
+    loader = SkillLoader()
+    loader.load_skills(str(skill_dir))
+    tool = loader.to_tools()[0]
+
+    contents = asyncio.run(tool.handler({"file": "generate.py"}))
+    assert contents == "print('go')\n"
 
 
-def test_read_file_direct(tmp_path: Path) -> None:
+def test_handler_resolves_file_by_relative_path(tmp_path: Path) -> None:
     skill_dir = _write_skill(
-        tmp_path / "s", extras={"templates/row.md": "| {name} |\n"}
+        tmp_path / "s",
+        extras={"templates/header.md": "# Header\n"},
     )
-    skill = Skill(skill_dir)
-    assert skill.read_file("templates/row.md") == "| {name} |\n"
+    loader = SkillLoader()
+    loader.load_skills(str(skill_dir))
+    tool = loader.to_tools()[0]
+
+    contents = asyncio.run(tool.handler({"file": "templates/header.md"}))
+    assert contents == "# Header\n"
 
 
-def test_read_file_requesting_skill_md_returns_body(tmp_path: Path) -> None:
-    body = "# Body\n"
-    skill_dir = _write_skill(tmp_path / "s", body=body)
-    skill = Skill(skill_dir)
-    content = asyncio.run(skill._handle({"file": "SKILL.md"}))
-    assert content == body
-
-
-# ---------- security + errors ----------
-
-
-def test_absolute_path_rejected(tmp_path: Path) -> None:
+def test_handler_raises_on_absolute_path(tmp_path: Path) -> None:
     skill_dir = _write_skill(tmp_path / "s")
-    skill = Skill(skill_dir)
+    loader = SkillLoader()
+    loader.load_skills(str(skill_dir))
+    tool = loader.to_tools()[0]
+
     with pytest.raises(SkillLoadError):
-        skill.read_file("/etc/passwd")
+        asyncio.run(tool.handler({"file": "/etc/passwd"}))
 
 
-def test_parent_escape_rejected(tmp_path: Path) -> None:
-    outside = tmp_path / "outside.txt"
-    outside.write_text("secret", encoding="utf-8")
+def test_handler_raises_on_path_escape_attempt(tmp_path: Path) -> None:
     skill_dir = _write_skill(tmp_path / "s")
-    skill = Skill(skill_dir)
+    loader = SkillLoader()
+    loader.load_skills(str(skill_dir))
+    tool = loader.to_tools()[0]
+
     with pytest.raises(SkillLoadError):
-        skill.read_file("../outside.txt")
+        asyncio.run(tool.handler({"file": "../../etc/passwd"}))
 
 
-def test_missing_file_raises(tmp_path: Path) -> None:
+def test_handler_raises_on_non_string_file_arg(tmp_path: Path) -> None:
     skill_dir = _write_skill(tmp_path / "s")
-    skill = Skill(skill_dir)
+    loader = SkillLoader()
+    loader.load_skills(str(skill_dir))
+    tool = loader.to_tools()[0]
+
     with pytest.raises(SkillLoadError):
-        skill.read_file("nope.py")
+        asyncio.run(tool.handler({"file": 42}))
 
 
-def test_missing_skill_md_raises(tmp_path: Path) -> None:
-    empty = tmp_path / "empty"
-    empty.mkdir()
-    with pytest.raises(SkillLoadError):
-        Skill(empty)
-
-
-def test_path_is_not_a_directory_raises(tmp_path: Path) -> None:
-    not_a_dir = tmp_path / "file.txt"
-    not_a_dir.write_text("hi", encoding="utf-8")
-    with pytest.raises(SkillLoadError):
-        Skill(not_a_dir)
-
-
-def test_frontmatter_without_opening_delim_raises(tmp_path: Path) -> None:
-    d = tmp_path / "s"
-    d.mkdir()
-    (d / "SKILL.md").write_text("no frontmatter here\n", encoding="utf-8")
-    with pytest.raises(SkillLoadError):
-        Skill(d)
-
-
-def test_frontmatter_without_closing_delim_raises(tmp_path: Path) -> None:
-    d = tmp_path / "s"
-    d.mkdir()
-    (d / "SKILL.md").write_text("---\nname: x\ndescription: y\n", encoding="utf-8")
-    with pytest.raises(SkillLoadError):
-        Skill(d)
-
-
-def test_frontmatter_missing_name_raises(tmp_path: Path) -> None:
-    d = tmp_path / "s"
-    d.mkdir()
-    (d / "SKILL.md").write_text(
-        "---\ndescription: x\n---\nbody\n", encoding="utf-8"
-    )
-    with pytest.raises(SkillLoadError):
-        Skill(d)
-
-
-def test_frontmatter_missing_description_raises(tmp_path: Path) -> None:
-    d = tmp_path / "s"
-    d.mkdir()
-    (d / "SKILL.md").write_text(
-        "---\nname: x\n---\nbody\n", encoding="utf-8"
-    )
-    with pytest.raises(SkillLoadError):
-        Skill(d)
-
-
-def test_bad_yaml_raises_skill_load_error(tmp_path: Path) -> None:
-    d = tmp_path / "s"
-    d.mkdir()
-    (d / "SKILL.md").write_text(
-        "---\nname: [invalid\n---\nbody\n", encoding="utf-8"
-    )
-    with pytest.raises(SkillLoadError):
-        Skill(d)
-
-
-def test_non_string_file_arg_raises(tmp_path: Path) -> None:
+def test_handler_raises_when_file_not_in_skill(tmp_path: Path) -> None:
     skill_dir = _write_skill(tmp_path / "s")
-    skill = Skill(skill_dir)
+    loader = SkillLoader()
+    loader.load_skills(str(skill_dir))
+    tool = loader.to_tools()[0]
+
     with pytest.raises(SkillLoadError):
-        asyncio.run(skill._handle({"file": 42}))
+        asyncio.run(tool.handler({"file": "missing.md"}))

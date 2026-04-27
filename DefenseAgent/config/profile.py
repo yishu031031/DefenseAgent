@@ -2,7 +2,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, ValidationError, model_validator
 
 
 class ConfigError(Exception):
@@ -73,14 +73,41 @@ class RAGConfig(BaseModel):
 
 
 class MCPServerConfig(BaseModel):
-    """Launch parameters for one stdio-based MCP server the agent should talk to."""
+    """One MCP server entry in the agent's tools config. Mirrors ms-agent's `mcpServers` dict shape: stdio servers set `command`+`args`; remote servers set `url` and (optionally) `transport` (`sse` / `websocket` / defaults to `streamable_http`). Per-server `include`/`exclude` filters are passed through to the underlying client. Empty values in `env` are interpolated from the process environment at connect time."""
 
     model_config = _STRICT_MODEL_CONFIG
 
-    command: str = Field(min_length=1)
+    name: str | None = None
+
+    command: str | None = None
     args: list[str] = Field(default_factory=list)
     env: dict[str, str] | None = None
     cwd: str | None = None
+
+    transport: str | None = Field(
+        default=None,
+        pattern=r"^(stdio|sse|websocket|streamable_http)$",
+    )
+    url: str | None = None
+    headers: dict[str, str] | None = None
+    timeout: float | None = Field(default=None, ge=0)
+    sse_read_timeout: float | None = Field(default=None, ge=0)
+
+    include: list[str] = Field(default_factory=list)
+    exclude: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _check_command_xor_url(self) -> "MCPServerConfig":
+        """Each server must specify exactly one of `command` (stdio) or `url` (network). `include` and `exclude` are mutually exclusive."""
+        if bool(self.command) == bool(self.url):
+            raise ValueError(
+                "MCP server config requires exactly one of `command` or `url`"
+            )
+        if self.include and self.exclude:
+            raise ValueError(
+                "MCP server config: set either `include` or `exclude`, not both"
+            )
+        return self
 
 
 class ToolsConfig(BaseModel):
@@ -90,6 +117,8 @@ class ToolsConfig(BaseModel):
 
     skills: list[str] = Field(default_factory=list)
     mcp: list[MCPServerConfig] = Field(default_factory=list)
+    allow_skill_execution: bool = False
+    skill_execution_timeout: int = Field(ge=1, default=300)
 
 
 class PromptConfig(BaseModel):

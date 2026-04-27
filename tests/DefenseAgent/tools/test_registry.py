@@ -213,6 +213,25 @@ def test_spec_order_matches_insertion() -> None:
     assert [e["name"] for e in spec] == ["first", "second"]
 
 
+def test_add_skill_loads_directory_tree_of_skills(tmp_path: Path) -> None:
+    """When `directory` itself has no SKILL.md, add_skill walks immediate subdirs and registers each (parity with ms-agent SkillLoader)."""
+    root = tmp_path / "skills"
+    for skill_name in ("alpha", "beta", "gamma"):
+        d = root / skill_name
+        d.mkdir(parents=True)
+        (d / "SKILL.md").write_text(
+            f"---\nname: {skill_name}\ndescription: skill {skill_name}\n---\n\nbody\n",
+            encoding="utf-8",
+        )
+    (root / "not_a_skill").mkdir()
+    (root / "not_a_skill" / "README.md").write_text("ignored", encoding="utf-8")
+
+    registry = ToolRegistry()
+    registered = registry.add_skill(root)
+    assert sorted(t.name for t in registered) == ["alpha", "beta", "gamma"]
+    assert sorted(registry.names()) == ["alpha", "beta", "gamma"]
+
+
 def test_spec_for_skill_exposes_only_frontmatter(tmp_path: Path) -> None:
     skill_dir = tmp_path / "s"
     skill_dir.mkdir()
@@ -356,3 +375,72 @@ def test_registry_usable_as_async_context_manager() -> None:
             return len(registry)
 
     assert asyncio.run(main()) == 1
+
+
+# ---------- multi-server MCP wiring ----------
+
+
+def test_add_mcp_servers_groups_into_one_client_and_registers_filtered_tools() -> None:
+    """add_mcp_servers folds N profile entries into one mcpServers dict, calls connect once, and forwards include/exclude per server."""
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock, patch
+
+    from DefenseAgent.config.profile import MCPServerConfig
+    from DefenseAgent.tools.mcp import MCPClient
+
+    captured: dict[str, dict] = {}
+    real_init = MCPClient.__init__
+
+    def spy_init(self, mcp_config=None):
+        real_init(self, mcp_config=mcp_config)
+        captured["mcp_config"] = self.mcp_config
+
+    fake_connect = AsyncMock(return_value=None)
+    fake_get = AsyncMock(return_value={
+        "fs": [SimpleNamespace(tool_name="read", server_name="fs", description="r", parameters={})],
+        "search": [SimpleNamespace(tool_name="query", server_name="search", description="q", parameters={})],
+    })
+    fake_cleanup = AsyncMock(return_value=None)
+
+    servers = [
+        MCPServerConfig(
+            name="fs",
+            command="uvx",
+            args=["mcp-server-filesystem", "/tmp"],
+            env={"TOKEN": ""},  # empty value → ms-agent's connect interpolates from env
+            include=["read"],
+        ),
+        MCPServerConfig(
+            name="search",
+            url="https://mcp.example.com/sse",
+            transport="sse",
+            headers={"Authorization": "Bearer x"},
+        ),
+    ]
+
+    async def main() -> list[str]:
+        registry = ToolRegistry()
+        with (
+            patch.object(MCPClient, "__init__", spy_init),
+            patch.object(MCPClient, "connect", fake_connect),
+            patch.object(MCPClient, "get_tools", fake_get),
+            patch.object(MCPClient, "cleanup", fake_cleanup),
+        ):
+            await registry.add_mcp_servers(servers)
+            names = registry.names()
+            await registry.close()
+            return names
+
+    names = asyncio.run(main())
+    assert sorted(names) == ["query", "read"]
+    fake_connect.assert_awaited_once()
+    fake_cleanup.assert_awaited_once()
+
+    cfg = captured["mcp_config"]["mcpServers"]
+    assert set(cfg.keys()) == {"fs", "search"}
+    assert cfg["fs"]["command"] == "uvx"
+    assert cfg["fs"]["env"] == {"TOKEN": ""}
+    assert cfg["fs"]["include"] == ["read"]
+    assert cfg["search"]["url"] == "https://mcp.example.com/sse"
+    assert cfg["search"]["transport"] == "sse"
+    assert cfg["search"]["headers"] == {"Authorization": "Bearer x"}

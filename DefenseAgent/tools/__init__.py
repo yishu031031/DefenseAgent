@@ -1,5 +1,4 @@
 from DefenseAgent.tools.mcp import MCPClient
-from DefenseAgent.tools.skill import Skill
 from DefenseAgent.tools.tools import ToolRegistry
 from DefenseAgent.tools.types import (
     SkillLoadError,
@@ -13,7 +12,6 @@ from DefenseAgent.tools.types import (
 __all__ = [
     "ToolRegistry",
     "Tool",
-    "Skill",
     "MCPClient",
     "ToolError",
     "ToolRegistrationError",

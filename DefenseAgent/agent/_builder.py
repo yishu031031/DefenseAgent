@@ -136,14 +136,8 @@ async def async_finish_setup(
     surface; we skip MCP server registration to avoid clobbering their setup.
     Likewise when `config.rag` is pre-injected we skip the LlamaIndexRAG build.
     """
-    if config.use_tools and config.tools_registry is None:
-        for mcp_cfg in profile.tools.mcp:
-            await tools.add_mcp(
-                command=mcp_cfg.command,
-                args=mcp_cfg.args,
-                env=mcp_cfg.env,
-                cwd=mcp_cfg.cwd,
-            )
+    if config.use_tools and config.tools_registry is None and profile.tools.mcp:
+        await tools.add_mcp_servers(list(profile.tools.mcp))
 
     if config.rag is not None:
         return config.rag
