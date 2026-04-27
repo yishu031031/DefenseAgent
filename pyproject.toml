@@ -9,7 +9,11 @@ description = "Multi-LLM agent framework with mem0-backed memory, llama-index RA
 readme = "README.md"
 license = { file = "LICENSE" }
 requires-python = ">=3.10"
-authors = [{ name = "Kevin" }]
+authors = [
+    { name = "Ying Yang", email = "yangying1114029360@gmail.com" },
+    { name = "Zechun Zhao" },
+    { name = "Yishu Wang" },
+]
 keywords = ["agent", "llm", "rag", "mem0", "mcp", "anthropic", "openai"]
 classifiers = [
     "Development Status :: 3 - Alpha",
@@ -71,9 +75,10 @@ all = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/Kevin/DefenseAgent"
-Repository = "https://github.com/Kevin/DefenseAgent"
-Issues = "https://github.com/Kevin/DefenseAgent/issues"
+Homepage = "https://github.com/yishu031031/DefenseAgent"
+Repository = "https://github.com/yishu031031/DefenseAgent"
+Issues = "https://github.com/yishu031031/DefenseAgent/issues"
+Changelog = "https://github.com/yishu031031/DefenseAgent/blob/main/CHANGELOG.md"
 
 # ---- hatch build config -------------------------------------------------
 
