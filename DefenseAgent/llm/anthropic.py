@@ -162,6 +162,12 @@ class AnthropicAdapter(LLMAdapter):
 
 def _message_to_wire(m: Message) -> dict:
     """Convert a canonical Message into Anthropic's wire dict (tool-result → user, tool_use → assistant blocks)."""
+    if isinstance(m.content, list):
+        raise LLMAdapterError(
+            "AnthropicAdapter currently supports only text content; multimodal "
+            "(list-shaped) content is not yet wired. Use OpenAICompatibleAdapter "
+            "for image-bearing turns, or pass text-only content to this adapter."
+        )
     if m.role == "tool":
         return {
             "role": "user",

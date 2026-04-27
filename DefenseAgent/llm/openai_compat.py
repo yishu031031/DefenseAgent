@@ -178,7 +178,7 @@ class OpenAICompatibleAdapter(LLMAdapter):
 
 
 def _message_to_wire(m: Message) -> dict:
-    """Convert a canonical Message into OpenAI's wire dict (serializes tool_call arguments to JSON)."""
+    """Convert a canonical Message into OpenAI's wire dict (serializes tool_call arguments to JSON). `m.content` is passed through unchanged, so list-form content (multimodal: `[{type:"text",...},{type:"image_url",...}]`) flows directly to providers that speak the OpenAI content-block protocol — Qwen via DashScope, DeepSeek-VL, GLM, Kimi, etc. Mirrors ms-agent's `openai_llm.py` pattern of never restructuring already-list content."""
     if m.role == "assistant" and m.tool_calls:
         return {
             "role": "assistant",

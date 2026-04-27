@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 from typing import Any
 
 from DefenseAgent.agent._builder import build_components_sync
@@ -83,14 +84,15 @@ class ReActAgent(BaseAgent):
         task: str,
         *,
         max_steps: int | None = None,
+        images: "list[str | Path] | None" = None,
     ) -> AgentResult:
-        """LLM-call loop: dispatch tool calls (user tools + built-in memory_recall) until a plain-text answer or max_steps. Both success and failure paths persist + reflect."""
+        """LLM-call loop: dispatch tool calls (user tools + built-in memory_recall) until a plain-text answer or max_steps. Both success and failure paths persist + reflect. When `images` is provided, the initial user turn is sent as an OpenAI-style multimodal message (see `BaseAgent._build_user_message`)."""
         await self._ensure_async_setup()
         cap = self._resolve_max_steps(max_steps)
         self._log("info", "agent.run.start", "starting ReAct run", task=task, max_steps=cap)
 
         system_prompt = self._build_system_prompt()
-        messages: list[Message] = [Message(role="user", content=task)]
+        messages: list[Message] = [self._build_user_message(task, images)]
         steps: list[AgentStep] = []
         total = TokenUsage(0, 0, 0)
         tool_specs = self._combined_tool_specs()

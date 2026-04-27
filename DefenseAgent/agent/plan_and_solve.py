@@ -1,4 +1,5 @@
 import re
+from pathlib import Path
 
 from DefenseAgent.agent._builder import build_components_sync
 from DefenseAgent.agent.base import (
@@ -82,8 +83,9 @@ class PlanAndSolveAgent(BaseAgent):
         task: str,
         *,
         max_steps: int | None = None,
+        images: "list[str | Path] | None" = None,
     ) -> AgentResult:
-        """Three phases: (1) plan, (2) execute each step with a short tool loop, (3) synthesize. Reflection fires on every exit path via finally."""
+        """Three phases: (1) plan, (2) execute each step with a short tool loop, (3) synthesize. Reflection fires on every exit path via finally. When `images` is provided, Phase 1's planning user-turn and every Phase 2 execute-step user-turn become OpenAI-style multimodal messages, so each phase that re-references the original task can still see the image content (Phase 3 synthesises from per-step text outputs and stays text-only)."""
         await self._ensure_async_setup()
         cap = self._resolve_max_steps(max_steps)
         self._log(
@@ -99,7 +101,7 @@ class PlanAndSolveAgent(BaseAgent):
 
             # Phase 1 — plan.
             plan_messages = [
-                Message(role="user", content=_PLAN_PROMPT_TEMPLATE.format(task=task)),
+                self._build_user_message(_PLAN_PROMPT_TEMPLATE.format(task=task), images),
             ]
             plan_messages = await self._condense_memory(plan_messages)
             plan_response = await self.llm.chat(
@@ -134,6 +136,7 @@ class PlanAndSolveAgent(BaseAgent):
                     tool_specs=tool_specs,
                     step_index=plan_index + 1,
                     all_steps=steps,
+                    images=images,
                 )
                 total = add_usage(total, step_usage)
                 step_outputs.append(step_answer)
@@ -200,15 +203,13 @@ class PlanAndSolveAgent(BaseAgent):
         tool_specs: list[dict] | None,
         step_index: int,
         all_steps: list[AgentStep],
+        images: "list[str | Path] | None" = None,
     ) -> tuple[str, TokenUsage]:
-        """Run a short ReAct-style sub-loop for ONE planned step; returns (step_answer, sub-loop usage)."""
+        """Run a short ReAct-style sub-loop for ONE planned step; returns (step_answer, sub-loop usage). When `images` is set, the per-step user-turn carries the same multimodal content as the original task so each step can re-inspect the image content."""
         messages: list[Message] = [
-            Message(
-                role="user",
-                content=(
-                    f"Original task: {original_task}\n"
-                    f"Execute ONLY this step: {plan_step}"
-                ),
+            self._build_user_message(
+                f"Original task: {original_task}\nExecute ONLY this step: {plan_step}",
+                images,
             )
         ]
         sub_total = TokenUsage(0, 0, 0)

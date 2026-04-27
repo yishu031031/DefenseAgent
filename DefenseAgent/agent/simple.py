@@ -1,3 +1,5 @@
+from pathlib import Path
+
 from DefenseAgent.agent._builder import build_components_sync
 from DefenseAgent.agent.base import (
     AgentResult,
@@ -47,13 +49,14 @@ class SimpleAgent(BaseAgent):
         task: str,
         *,
         max_steps: int | None = None,
+        images: "list[str | Path] | None" = None,
     ) -> AgentResult:
-        """One LLM turn: condense memory → chat → record the answer; never raises AgentStepLimitError because there is no loop. `max_steps` is accepted for interface uniformity but ignored."""
+        """One LLM turn: condense memory → chat → record the answer; never raises AgentStepLimitError because there is no loop. `max_steps` is accepted for interface uniformity but ignored. When `images` is provided, the user turn becomes an OpenAI-style multimodal message (see `BaseAgent._build_user_message`)."""
         await self._ensure_async_setup()
         self._log("info", "agent.run.start", "starting Simple run", task=task)
 
         system_prompt = self._build_system_prompt()
-        messages: list[Message] = [Message(role="user", content=task)]
+        messages: list[Message] = [self._build_user_message(task, images)]
 
         try:
             messages = await self._condense_memory(messages)

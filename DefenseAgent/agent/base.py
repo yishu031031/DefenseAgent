@@ -1,3 +1,5 @@
+import base64
+import mimetypes
 import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
@@ -222,8 +224,9 @@ class BaseAgent(ABC):
         task: str,
         *,
         max_steps: int | None = None,
+        images: "list[str | Path] | None" = None,
     ) -> AgentResult:
-        """Execute one `task` end to end; must respect `max_steps` (defaults to `profile.cognitive.max_steps_per_cycle`)."""
+        """Execute one `task` end to end; must respect `max_steps` (defaults to `profile.cognitive.max_steps_per_cycle`). When `images` is provided, the user task is sent as an OpenAI-style multimodal message (`[{type:text}, {type:image_url}, ...]`); only the OpenAI-compatible LLM adapter currently consumes the list form. Each image may be a local file path (read + base64-encoded into a `data:` URL with the inferred MIME type), an `http(s)://` URL (passed through), or an existing `data:` URL."""
 
     async def close(self) -> None:
         """Close underlying MCP clients (mem0 storage is auto-managed)."""
@@ -340,6 +343,21 @@ class BaseAgent(ABC):
             for r in records
         ]
         return "Relevant memories:\n" + "\n".join(lines)
+
+    def _build_user_message(
+        self,
+        task: str,
+        images: "list[str | Path] | None" = None,
+    ) -> Message:
+        """Build the initial user message for `run(task, images=...)`. Returns a plain text Message when `images` is None or empty (current behaviour); otherwise returns a Message whose `content` is an OpenAI-style content-block list (`[{type:text,text:task}, {type:image_url,image_url:{url:...}}, ...]`). Each image may be a local file path (read + base64-encoded into a `data:` URL via the inferred MIME type), an `http(s)://` URL (passed through), or a pre-built `data:` URL."""
+        if not images:
+            return Message(role="user", content=task)
+        blocks: list[dict[str, Any]] = [{"type": "text", "text": task}]
+        for image in images:
+            blocks.append(
+                {"type": "image_url", "image_url": {"url": _resolve_image_url(image)}}
+            )
+        return Message(role="user", content=blocks)
 
     async def _save_outcome(
         self,
@@ -574,5 +592,24 @@ def truncate_preserving_markers(text: str, max_len: int) -> str:
     if last_safe_end > 0:
         return text[:last_safe_end] + ("..." if last_safe_end < len(text) else "")
     return truncate(text, max_len)
+
+
+_DEFAULT_IMAGE_MIME = "image/png"
+
+
+def _resolve_image_url(image: "str | Path") -> str:
+    """Turn an image input into the URL string OpenAI's `image_url` block expects. Pass-through for `http(s)://` and `data:` URLs; for any other string or Path, treat as a local file, read its bytes, base64-encode, and emit a `data:<mime>;base64,...` URL with the MIME type inferred from the extension (defaulting to `image/png` when the extension is unknown). Raises `FileNotFoundError` if a local-file input doesn't exist."""
+    if isinstance(image, str) and (
+        image.startswith("http://")
+        or image.startswith("https://")
+        or image.startswith("data:")
+    ):
+        return image
+    path = Path(image)
+    if not path.is_file():
+        raise FileNotFoundError(f"image file not found: {path}")
+    mime, _ = mimetypes.guess_type(str(path))
+    encoded = base64.b64encode(path.read_bytes()).decode("ascii")
+    return f"data:{mime or _DEFAULT_IMAGE_MIME};base64,{encoded}"
 
 

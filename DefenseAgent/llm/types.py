@@ -15,9 +15,9 @@ class ToolCall:
 
 @dataclass
 class Message:
-    """One canonical conversation message in the harness's provider-agnostic format."""
+    """One canonical conversation message in the harness's provider-agnostic format. `content` is a plain string for text-only messages, or a list of OpenAI-style content blocks (`[{type:"text",text:...}, {type:"image_url",image_url:{url:...}}]`) for multimodal messages — only the OpenAI-compatible adapter currently consumes the list form; the Anthropic adapter raises a clear error if list content arrives."""
     role: Role
-    content: str
+    content: str | list[dict[str, Any]]
     tool_calls: list[ToolCall] = field(default_factory=list)
     tool_call_id: str | None = None
     name: str | None = None
