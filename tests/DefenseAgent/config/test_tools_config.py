@@ -211,10 +211,10 @@ def test_in_memory_profile_has_no_source_path() -> None:
     assert profile.source_dir is None
 
 
-def test_shipped_maya_profile_parses_with_tools() -> None:
-    """The real agents/maya_rodriguez/profile.yaml must load with the new schema."""
+def test_shipped_example_profile_parses_with_tools() -> None:
+    """The real agents/example_agent/profile.yaml must load with the new schema."""
     root = Path(__file__).resolve().parent.parent.parent.parent
-    path = root / "agents" / "maya_rodriguez" / "profile.yaml"
+    path = root / "agents" / "example_agent" / "profile.yaml"
     profile = AgentProfile.from_yaml(path)
     assert profile.source_dir == path.resolve().parent
     assert profile.tools.skills == ["skills/tabular-report"]

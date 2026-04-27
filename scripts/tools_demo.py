@@ -34,7 +34,7 @@ from DefenseAgent.tools import ToolRegistry
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 AGENTS_DIR = PROJECT_ROOT / "agents"
-MAYA_PROFILE = AGENTS_DIR / "maya_rodriguez" / "profile.yaml"
+EXAMPLE_PROFILE = AGENTS_DIR / "example_agent" / "profile.yaml"
 
 
 def _banner(title: str) -> None:
@@ -44,17 +44,17 @@ def _banner(title: str) -> None:
 
 
 async def main() -> None:
-    """Load Maya's profile, build her tool registry from it, and walk every layer."""
+    """Load the example profile, build its tool registry from it, and walk every layer."""
     _banner("Agent bundle layout")
     print(f"Repo root:    {PROJECT_ROOT}")
     print(f"agents/:      {AGENTS_DIR}")
     print(f"Agents:       {sorted(p.name for p in AGENTS_DIR.iterdir() if p.is_dir())}")
-    print(f"Maya profile: {MAYA_PROFILE}")
-    maya_dir = MAYA_PROFILE.parent
-    print(f"Maya dir contents: {sorted(p.name for p in maya_dir.iterdir())}")
+    print(f"Example profile: {EXAMPLE_PROFILE}")
+    example_dir = EXAMPLE_PROFILE.parent
+    print(f"Example dir contents: {sorted(p.name for p in example_dir.iterdir())}")
 
     _banner("1. Load the profile + build the registry from it")
-    profile = AgentProfile.from_yaml(MAYA_PROFILE)
+    profile = AgentProfile.from_yaml(EXAMPLE_PROFILE)
     print(f"agent:        {profile.name}  (id={profile.id})")
     print(f"profile.tools.skills: {profile.tools.skills}")
     print(f"profile.tools.mcp:    {profile.tools.mcp}")

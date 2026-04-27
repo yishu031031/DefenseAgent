@@ -1,0 +1,123 @@
+# =============================================================================
+# DefenseAgent reference profile — every supported field, with comments.
+#
+# Edit this file (or copy it) and pass the path to AgentConfig:
+#
+#     config = AgentConfig(profile="agents/example_agent/profile.yaml")
+#     agent  = ReActAgent(config)
+#
+# Top-level key MUST be `agent:`. Every nested block under `agent:` is optional
+# (except identity); leaving one out is equivalent to "use the schema's
+# defaults". All blocks are strict (`extra="forbid"`) — typos raise
+# ConfigValidationError on load.
+# =============================================================================
+
+agent:
+
+  # --- LLM (per-agent overrides; per-field fallback to .env) -----------------
+  # Every field is optional. Missing fields fall back to .env in this order:
+  #     provider:  AGENT_LAB_LLM_PROVIDER
+  #     model:     LLM_MODEL_ID  >  <PROVIDER>_MODEL
+  #     api_key:   LLM_API_KEY   >  <PROVIDER>_API_KEY
+  #     base_url:  LLM_BASE_URL  >  <PROVIDER>_BASE_URL
+  # `api_key` in YAML is convenient for demos but NOT recommended for shared
+  # profiles — leave it blank here and let .env supply the secret.
+  llm:
+    provider:                          # e.g. deepseek | anthropic | openai | qwen | google | vllm
+    model:                             # e.g. deepseek-chat
+    base_url:                          # e.g. https://api.deepseek.com/v1
+    api_key:                           # leave blank — let .env supply <PROVIDER>_API_KEY
+
+  # --- Identity (required) ---------------------------------------------------
+  id: "example_agent_001"
+  name: "Nova Patel"
+  age: 27
+  traits: "curious, methodical, candid"
+  backstory: >
+    A field engineer turned AI researcher who recently moved to Lakeside.
+    Spends mornings reviewing observability dashboards and weekends wandering
+    the river trail.
+  initial_plan: >
+    Wake up, review pipeline alerts over coffee, work on the data-analysis
+    project until lunch, meet the team for an afternoon stand-up.
+
+  # --- Cognitive loop knobs (optional; defaults shown) -----------------------
+  cognitive:
+    max_steps_per_cycle: 10            # max tool turns per ReAct run()
+    reflection_threshold: 5            # trigger reflection after N unreflected memories
+    importance_threshold: 7            # 1-10; floor for "important" memories
+    planning_horizon: "1 day"          # free-form string; informs LLM prompts
+
+  # --- Memory (mem0-backed; optional; defaults shown) ------------------------
+  memory:
+    is_retrieve: true                  # enable mem0 retrieval (memory_recall tool)
+    history_mode: add                  # 'add' (append) | 'overwrite' (diff/rollback)
+    search_limit: 10                   # max records returned per search
+    ignore_roles: [tool, system]       # roles excluded from persistence
+    ignore_fields: [reasoning_content]
+    context_limit: 128000              # token budget before compactor kicks in
+    prune_protect: 40000               # tokens never touched during prune
+    prune_minimum: 20000               # min tokens kept post-prune
+    reserved_buffer: 20000             # safety margin
+    enable_summary: true               # let compactor LLM-summarise old turns
+    storage_path:                      # blank → <profile_dir>/memory/
+
+  # --- RAG (LlamaIndex-backed; optional; disabled by default) ----------------
+  # Embedding fields follow the same per-field profile-then-env fallback as the
+  # `llm:` block. Missing fields fall back to .env in this order:
+  #     embedding:           EMBEDDING_MODEL
+  #     embedding_api_key:   EMBEDDING_API_KEY
+  #     embedding_base_url:  EMBEDDING_BASE_URL
+  #     embedding_dims:      EMBEDDING_DIMS
+  # Leaving them blank reuses the same EMBEDDING_* block mem0 already consumes.
+  rag:
+    enabled: false                     # flip on to wire LlamaIndexRAG + rag_search tool
+    documents_dir: "rag_corpus"        # relative to this profile's directory
+    storage_dir: "rag_index"           # where the FAISS index is persisted
+    embedding_provider: openai         # 'openai' | 'huggingface'
+    embedding:                         # e.g. Qwen/Qwen3-Embedding-0.6B
+    embedding_api_key:                 # leave blank — let .env supply EMBEDDING_API_KEY
+    embedding_base_url:                # e.g. https://api-inference.modelscope.cn/v1
+    embedding_dims:                    # int; falls back to EMBEDDING_DIMS
+    chunk_size: 512
+    chunk_overlap: 50
+    retrieve_only: true
+    top_k: 5
+    score_threshold: 0.0
+    use_huggingface: false
+
+  # --- Tools (skills + MCP servers + execution opt-in) -----------------------
+  tools:
+    skills:
+      - skills/tabular-report          # local skill directory (must contain SKILL.md)
+      # A skill path can also point at a *parent* directory containing many
+      # SKILL.md subdirectories — every one gets registered (parity with
+      # ms-agent's SkillLoader._scan_and_load_skills).
+
+    # MCP servers — drop entries here when needed:
+    #   - command: uvx
+    #     args: [mcp-server-filesystem, /tmp]
+    #     env: { TOKEN: "" }           # empty value → interpolated from process env
+    #     include: [read_file]         # whitelist; mutually exclusive with `exclude:`
+    #   - transport: sse
+    #     url: https://mcp.example.com/sse
+    #     headers: { Authorization: "Bearer ${MCP_TOKEN}" }
+    #     timeout: 30
+    # Streamable-http and websocket are also supported (`transport: streamable_http`,
+    # `transport: websocket`).
+    mcp: []
+
+    allow_skill_execution: false       # opt-in: each script in a skill becomes a callable Tool
+    skill_execution_timeout: 300       # subprocess timeout (seconds)
+
+  # --- System prompt (optional) ----------------------------------------------
+  # Precedence: `system` (inline) > `path` (file relative to this profile) >
+  # auto-built identity block. Available placeholders in either form:
+  #     {id} {name} {age} {traits} {backstory} {initial_plan}
+  prompt:
+    path: prompts/system.md            # alternative: inline `system: |` block
+    # system: |
+    #   You are {name}, a {age}-year-old {traits} field engineer.
+    extra_instructions: |
+      When summarising logs, lead with the anomaly and follow with one
+      sentence of context — never bury the lede.

@@ -14,7 +14,7 @@ class SimpleAgent(BaseAgent):
 
     Constructed from an `AgentConfig`:
 
-        config = AgentConfig(profile="agents/maya.yaml")
+        config = AgentConfig(profile="agents/example_agent/profile.yaml")
         agent = SimpleAgent(config)
 
     Inject pre-built components (mocks, custom adapters) via the `llm`,

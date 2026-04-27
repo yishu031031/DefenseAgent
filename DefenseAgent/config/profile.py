@@ -55,7 +55,7 @@ class MemoryConfig(BaseModel):
 
 
 class RAGConfig(BaseModel):
-    """Optional RAG (retrieval-augmented generation) backend configuration. Disabled by default; mirrors ms-agent's `LlamaIndexRAG` knobs."""
+    """Optional RAG (retrieval-augmented generation) backend configuration. Disabled by default; mirrors ms-agent's `LlamaIndexRAG` knobs. Embedding fields (`embedding`, `embedding_api_key`, `embedding_base_url`, `embedding_dims`) follow the same per-field profile-then-env fallback as `LLMConfig` — set them in the profile to override .env, leave them blank to inherit the `EMBEDDING_*` block from .env."""
 
     model_config = _STRICT_MODEL_CONFIG
 
@@ -63,7 +63,10 @@ class RAGConfig(BaseModel):
     documents_dir: str | None = None
     storage_dir: str | None = None
     embedding_provider: str = Field(default="openai", pattern=r"^(openai|huggingface)$")
-    embedding: str = Field(default="Qwen/Qwen3-Embedding-0.6B", min_length=1)
+    embedding: str | None = None
+    embedding_api_key: str | None = None
+    embedding_base_url: str | None = None
+    embedding_dims: int | None = Field(default=None, ge=1)
     chunk_size: int = Field(ge=1, default=512)
     chunk_overlap: int = Field(ge=0, default=50)
     retrieve_only: bool = True
@@ -131,6 +134,17 @@ class PromptConfig(BaseModel):
     extra_instructions: str | None = None
 
 
+class LLMConfig(BaseModel):
+    """Per-agent LLM overrides. Each field is optional; the resolver fills missing values from .env (`AGENT_LAB_LLM_PROVIDER`, `<PROVIDER>_API_KEY`, `<PROVIDER>_BASE_URL`, `<PROVIDER>_MODEL`, with the cross-provider `LLM_*` tier as the second fallback). Putting `api_key` in YAML is convenient for demos but *not* recommended for shared profiles — leave it blank in the file and let .env supply it."""
+
+    model_config = _STRICT_MODEL_CONFIG
+
+    provider: str | None = None
+    model: str | None = None
+    api_key: str | None = None
+    base_url: str | None = None
+
+
 class AgentProfile(BaseModel):
     """Module 2's unified facade: the validated agent identity plus nested cognitive, memory, and tools configs."""
 
@@ -147,6 +161,7 @@ class AgentProfile(BaseModel):
     rag: RAGConfig = Field(default_factory=RAGConfig)
     tools: ToolsConfig = Field(default_factory=ToolsConfig)
     prompt: PromptConfig = Field(default_factory=PromptConfig)
+    llm: LLMConfig = Field(default_factory=LLMConfig)
 
     _source_path: Path | None = PrivateAttr(default=None)
 

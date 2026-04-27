@@ -1,4 +1,10 @@
-from ms_agent.skill.schema import SkillFile, SkillSchema, SkillSchemaParser
+from ms_agent.skill.schema import (
+    SkillContext,
+    SkillExecutionPlan,
+    SkillFile,
+    SkillSchema,
+    SkillSchemaParser,
+)
 
 from DefenseAgent.skills.container import (
     ExecutionInput,
@@ -9,14 +15,17 @@ from DefenseAgent.skills.container import (
     ExecutorType,
     SkillContainer,
 )
-from DefenseAgent.skills.loader import SkillLoader
+from DefenseAgent.skills.loader import SkillLoader, load_skills
 from DefenseAgent.tools.types import SkillLoadError
 
 __all__ = [
     "SkillLoader",
+    "load_skills",
     "SkillSchema",
     "SkillFile",
     "SkillSchemaParser",
+    "SkillContext",
+    "SkillExecutionPlan",
     "SkillLoadError",
     "SkillContainer",
     "ExecutionInput",

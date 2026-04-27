@@ -4,7 +4,7 @@ The recommended top-level entry points:
 
     from DefenseAgent import AgentConfig, ReActAgent, SimpleAgent, PlanAndSolveAgent
 
-    config = AgentConfig(profile="agents/maya/profile.yaml", tools=[my_func])
+    config = AgentConfig(profile="agents/example_agent/profile.yaml", tools=[my_func])
     agent = ReActAgent(config)
     result = await agent.run("Hello")
 """

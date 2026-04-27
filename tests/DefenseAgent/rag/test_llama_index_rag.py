@@ -110,19 +110,84 @@ def test_rag_base_abc_re_exported():
 # ---------- bridge: profile_to_rag_dictconfig ----------
 
 
-def test_bridge_translates_rag_knobs(tmp_path: Path):
+def test_bridge_translates_rag_knobs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """The bridge resolves embedding fields per-profile-then-env. With env supplying the embedder, the resolved DictConfig should carry those env values verbatim."""
     from DefenseAgent.rag._bridge import profile_to_rag_dictconfig
 
+    _set_embedding_env(monkeypatch)
     profile = _make_profile(tmp_path, retrieve_only=True)
     config = profile_to_rag_dictconfig(profile)
 
-    assert config.rag.embedding == "Qwen/Qwen3-Embedding-0.6B"
+    assert config.rag.embedding == "text-embedding-3-small"
+    assert config.rag.embedding_api_key == "sk-emb"
+    assert config.rag.embedding_base_url == "https://api.example.com"
+    assert config.rag.embedding_dims == 1536
     assert config.rag.chunk_size == 512
     assert config.rag.chunk_overlap == 50
     assert config.rag.retrieve_only is True
     assert Path(config.rag.storage_dir) == (tmp_path / "rag").resolve()
     assert config.use_huggingface is False
     assert "llm" not in config  # retrieve_only=True skips LLM block
+
+
+def test_bridge_profile_embedding_overrides_env(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+):
+    """When the profile populates embedding fields, those values win over .env per field."""
+    from DefenseAgent.rag._bridge import profile_to_rag_dictconfig
+
+    _set_embedding_env(monkeypatch)
+    profile = AgentProfile(
+        id="t", name="T", age=20, traits="t", backstory="b", initial_plan="p",
+        rag={
+            "enabled": True,
+            "embedding": "BAAI/bge-large-en-v1.5",
+            "embedding_api_key": "sk-from-profile",
+            "embedding_base_url": "https://from-profile.example/v1",
+            "embedding_dims": 768,
+        },
+    )
+    (tmp_path / "profile.yaml").write_text("agent: {}", encoding="utf-8")
+    profile._source_path = (tmp_path / "profile.yaml").resolve()
+
+    config = profile_to_rag_dictconfig(profile)
+    assert config.rag.embedding == "BAAI/bge-large-en-v1.5"
+    assert config.rag.embedding_api_key == "sk-from-profile"
+    assert config.rag.embedding_base_url == "https://from-profile.example/v1"
+    assert config.rag.embedding_dims == 768
+
+
+def test_bridge_partial_profile_falls_back_to_env_per_field(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+):
+    """Profile sets only `embedding` (model name); api_key/base_url/dims come from .env."""
+    from DefenseAgent.rag._bridge import profile_to_rag_dictconfig
+
+    _set_embedding_env(monkeypatch)
+    profile = AgentProfile(
+        id="t", name="T", age=20, traits="t", backstory="b", initial_plan="p",
+        rag={"enabled": True, "embedding": "BAAI/bge-large-en-v1.5"},
+    )
+    (tmp_path / "profile.yaml").write_text("agent: {}", encoding="utf-8")
+    profile._source_path = (tmp_path / "profile.yaml").resolve()
+
+    config = profile_to_rag_dictconfig(profile)
+    assert config.rag.embedding == "BAAI/bge-large-en-v1.5"      # from profile
+    assert config.rag.embedding_api_key == "sk-emb"               # from env
+    assert config.rag.embedding_base_url == "https://api.example.com"  # from env
+    assert config.rag.embedding_dims == 1536                      # from env
+
+
+def test_bridge_hf_provider_falls_back_to_default_embedding_when_unset(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+):
+    """HuggingFace path needs *some* embedding model name; if neither profile nor env supplies one, the bridge fills in the ms-agent default rather than letting the index build crash."""
+    from DefenseAgent.rag._bridge import profile_to_rag_dictconfig
+
+    monkeypatch.delenv("EMBEDDING_MODEL", raising=False)
+    profile = _make_profile(tmp_path, embedding_provider="huggingface")
+    config = profile_to_rag_dictconfig(profile)
+    assert config.rag.embedding == "Qwen/Qwen3-Embedding-0.6B"
 
 
 def test_bridge_includes_llm_when_not_retrieve_only(
@@ -296,43 +361,53 @@ def test_bridge_carries_embedding_provider(tmp_path: Path):
     assert config_hf.rag.embedding_provider == "huggingface"
 
 
-def test_read_embedding_env_happy_path(monkeypatch: pytest.MonkeyPatch):
-    from DefenseAgent.rag.llama_index_rag import _read_embedding_env
+def test_profile_or_env_str_prefers_profile(monkeypatch: pytest.MonkeyPatch):
+    """`_profile_or_env_str` is the per-field resolver: profile-when-set wins; whitespace-only is treated as unset."""
+    from DefenseAgent.rag._bridge import _profile_or_env_str
 
-    _set_embedding_env(monkeypatch)
-    api_key, base_url, model, dims = _read_embedding_env()
-    assert api_key == "sk-emb"
-    assert base_url == "https://api.example.com"
-    assert model == "text-embedding-3-small"
-    assert dims == 1536
+    monkeypatch.setenv("FOO", "from-env")
+    assert _profile_or_env_str("from-profile", "FOO") == "from-profile"
+    assert _profile_or_env_str("  from-profile  ", "FOO") == "from-profile"
+    assert _profile_or_env_str(None, "FOO") == "from-env"
+    assert _profile_or_env_str("", "FOO") == "from-env"
+    assert _profile_or_env_str("   ", "FOO") == "from-env"
 
 
-def test_read_embedding_env_missing_required_keys(monkeypatch: pytest.MonkeyPatch):
+def test_profile_or_env_str_returns_none_when_neither_set(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    from DefenseAgent.rag._bridge import _profile_or_env_str
+
+    monkeypatch.delenv("MISSING", raising=False)
+    assert _profile_or_env_str(None, "MISSING") is None
+
+
+def test_profile_or_env_int_handles_strings_and_invalid(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    from DefenseAgent.rag._bridge import _profile_or_env_int
+
+    monkeypatch.setenv("DIMS", "1536")
+    assert _profile_or_env_int(None, "DIMS") == 1536
+    assert _profile_or_env_int(768, "DIMS") == 768  # profile wins
+    monkeypatch.setenv("DIMS", "not-a-number")
+    assert _profile_or_env_int(None, "DIMS") is None
+    monkeypatch.delenv("DIMS", raising=False)
+    assert _profile_or_env_int(None, "DIMS") is None
+
+
+def test_install_openai_compat_embedding_raises_when_neither_profile_nor_env_supply_key(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+):
+    """The runtime installer raises when both the profile and .env are silent — message names both candidate sources."""
     from DefenseAgent.rag.base import RAGConfigError
-    from DefenseAgent.rag.llama_index_rag import _read_embedding_env
 
     monkeypatch.delenv("EMBEDDING_API_KEY", raising=False)
     monkeypatch.delenv("EMBEDDING_MODEL", raising=False)
-    with pytest.raises(RAGConfigError, match="EMBEDDING_"):
-        _read_embedding_env()
-
-
-def test_read_embedding_env_dims_optional_and_invalid(
-    monkeypatch: pytest.MonkeyPatch,
-):
-    from DefenseAgent.rag.llama_index_rag import _read_embedding_env
-
-    monkeypatch.setenv("EMBEDDING_API_KEY", "k")
-    monkeypatch.setenv("EMBEDDING_MODEL", "m")
-    monkeypatch.delenv("EMBEDDING_BASE_URL", raising=False)
-
-    monkeypatch.delenv("EMBEDDING_DIMS", raising=False)
-    *_, dims = _read_embedding_env()
-    assert dims is None
-
-    monkeypatch.setenv("EMBEDDING_DIMS", "not-a-number")
-    *_, dims = _read_embedding_env()
-    assert dims is None
+    profile = _make_profile(tmp_path, embedding_provider="openai")
+    rag = _build_rag(profile)
+    with pytest.raises(RAGConfigError, match="EMBEDDING_MODEL"):
+        rag._install_openai_compat_embedding()
 
 
 def test_install_openai_compat_embedding_wires_settings(

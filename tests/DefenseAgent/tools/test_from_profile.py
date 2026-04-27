@@ -23,9 +23,9 @@ from DefenseAgent.config import AgentProfile
 from DefenseAgent.tools import ToolRegistry, ToolRegistrationError
 
 
-_MAYA_PROFILE = (
+_EXAMPLE_PROFILE = (
     Path(__file__).resolve().parent.parent.parent.parent
-    / "agents" / "maya_rodriguez" / "profile.yaml"
+    / "agents" / "example_agent" / "profile.yaml"
 )
 
 
@@ -316,7 +316,7 @@ agent:
 
 
 def test_from_profile_loads_real_maya_bundle() -> None:
-    profile = AgentProfile.from_yaml(_MAYA_PROFILE)
+    profile = AgentProfile.from_yaml(_EXAMPLE_PROFILE)
 
     async def run() -> list[str]:
         async with await ToolRegistry.from_profile(profile) as registry:

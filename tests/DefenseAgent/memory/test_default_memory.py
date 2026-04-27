@@ -14,9 +14,9 @@ from DefenseAgent.config import AgentProfile
 from DefenseAgent.llm.types import Message, ToolCall
 
 
-_MAYA_PROFILE = (
+_EXAMPLE_PROFILE = (
     Path(__file__).resolve().parent.parent.parent.parent
-    / "agents" / "maya_rodriguez" / "profile.yaml"
+    / "agents" / "example_agent" / "profile.yaml"
 )
 
 

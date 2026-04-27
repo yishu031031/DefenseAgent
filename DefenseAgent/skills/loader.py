@@ -161,10 +161,10 @@ def _render_execution_output(output: Any) -> str:
 
 
 def _schema_to_tool(schema: SkillSchema) -> Tool:
-    """Wrap one ms-agent SkillSchema as a DefenseAgent Tool with progressive-disclosure behaviour."""
+    """Wrap one ms-agent SkillSchema as a DefenseAgent Tool with progressive-disclosure behaviour. The Tool's description carries the skill's frontmatter description plus a comma-separated inventory of bundled scripts/references/resources (mirrors ms-agent's `', '.join(context.get_*_list()) or 'None'` convention used in PROMPT_SKILL_ANALYSIS_PLAN). Author/tags from the frontmatter ride along in the Tool's `metadata` dict for downstream filtering or audit."""
     return Tool(
         name=schema.name,
-        description=schema.description,
+        description=_describe_skill(schema),
         input_schema=_SKILL_INPUT_SCHEMA,
         source="skill",
         handler=_make_handler(schema),
@@ -172,8 +172,28 @@ def _schema_to_tool(schema: SkillSchema) -> Tool:
             "skill_id": schema.skill_id,
             "version": schema.version,
             "skill_path": str(schema.skill_path),
+            "author": schema.author,
+            "tags": list(schema.tags),
         },
     )
+
+
+def _describe_skill(schema: SkillSchema) -> str:
+    """Build the Tool description: the skill's own description plus, when any are present, a one-line inventory of bundled scripts/references/resources. Resources skip `SKILL.md` and `LICENSE.txt`, matching ms-agent's `SkillContext.get_resources_list()` filter."""
+    scripts = [f.name for f in schema.scripts]
+    references = [f.name for f in schema.references]
+    resources = [
+        f.name for f in schema.resources
+        if f.name not in {"SKILL.md", "LICENSE.txt"}
+    ]
+    if not (scripts or references or resources):
+        return schema.description
+    parts = [
+        f"scripts: {', '.join(scripts) or 'None'}",
+        f"references: {', '.join(references) or 'None'}",
+        f"resources: {', '.join(resources) or 'None'}",
+    ]
+    return f"{schema.description}\n\nBundled files — " + "; ".join(parts) + "."
 
 
 def _make_handler(schema: SkillSchema) -> ToolHandler:
@@ -223,3 +243,8 @@ def _safe_read(path: Path, *, root: Path, label: str) -> str:
 def _strip_frontmatter(content: str) -> str:
     """Drop the leading YAML frontmatter block from a SKILL.md file so handlers return just the body."""
     return _FRONTMATTER_RE.sub("", content, count=1).lstrip("\n")
+
+
+def load_skills(skills: Any) -> dict[str, SkillSchema]:
+    """One-shot convenience matching ms-agent's `loader.py:230` module-level helper. Builds a fresh `SkillLoader`, calls `load_skills(skills)`, and returns the `{skill_id}@{version}` → SkillSchema mapping. The argument follows ms-agent's signature: a single path, a list of paths, a list of `SkillSchema` objects, or a ModelScope hub repo id (`'org/repo'`)."""
+    return SkillLoader().load_skills(skills)

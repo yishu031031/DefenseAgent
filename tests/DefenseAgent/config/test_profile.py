@@ -19,6 +19,7 @@ from DefenseAgent.config import (
     ConfigFileNotFoundError,
     ConfigParseError,
     ConfigValidationError,
+    LLMConfig,
     MemoryConfig,
     PromptConfig,
 )
@@ -183,6 +184,92 @@ def test_agent_profile_accepts_nested_prompt_block():
     )
     assert profile.prompt.system == "You are {name}."
     assert profile.prompt.extra_instructions == "Be terse."
+
+
+# ---- LLMConfig ----
+
+
+def test_llm_config_defaults_to_all_none():
+    cfg = LLMConfig()
+    assert cfg.provider is None
+    assert cfg.model is None
+    assert cfg.api_key is None
+    assert cfg.base_url is None
+
+
+def test_llm_config_accepts_overrides():
+    cfg = LLMConfig(
+        provider="deepseek",
+        model="deepseek-chat",
+        api_key="sk-x",
+        base_url="https://api.deepseek.com/v1",
+    )
+    assert cfg.provider == "deepseek"
+    assert cfg.model == "deepseek-chat"
+    assert cfg.api_key == "sk-x"
+    assert cfg.base_url == "https://api.deepseek.com/v1"
+
+
+def test_llm_config_rejects_unknown_key():
+    with pytest.raises(ValidationError):
+        LLMConfig(temperature=0.5)
+
+
+def test_agent_profile_includes_llm_block_with_default_factory():
+    profile = AgentProfile(**_minimal_identity())
+    assert isinstance(profile.llm, LLMConfig)
+    assert profile.llm.provider is None
+    assert profile.llm.model is None
+
+
+def test_agent_profile_accepts_nested_llm_block():
+    profile = AgentProfile(
+        **_minimal_identity(),
+        llm={"provider": "openai", "model": "gpt-4o-mini"},
+    )
+    assert profile.llm.provider == "openai"
+    assert profile.llm.model == "gpt-4o-mini"
+
+
+def test_yaml_with_llm_block_loads(tmp_path):
+    yaml_text = (
+        "agent:\n"
+        '  id: "x1"\n'
+        '  name: "X"\n'
+        "  age: 1\n"
+        '  traits: "t"\n'
+        '  backstory: "b"\n'
+        '  initial_plan: "p"\n'
+        "  llm:\n"
+        "    provider: deepseek\n"
+        "    model: deepseek-chat\n"
+        '    base_url: "https://api.deepseek.com/v1"\n'
+    )
+    p = tmp_path / "p.yaml"
+    p.write_text(yaml_text, encoding="utf-8")
+    profile = AgentProfile.from_yaml(p)
+    assert profile.llm.provider == "deepseek"
+    assert profile.llm.model == "deepseek-chat"
+    assert profile.llm.base_url == "https://api.deepseek.com/v1"
+    assert profile.llm.api_key is None  # not set in YAML, will fall back to env
+
+
+def test_yaml_unknown_llm_key_raises_validation_error(tmp_path):
+    yaml_text = (
+        "agent:\n"
+        '  id: "x1"\n'
+        '  name: "X"\n'
+        "  age: 1\n"
+        '  traits: "t"\n'
+        '  backstory: "b"\n'
+        '  initial_plan: "p"\n'
+        "  llm:\n"
+        "    temperature: 0.5\n"  # not in our schema
+    )
+    p = tmp_path / "p.yaml"
+    p.write_text(yaml_text, encoding="utf-8")
+    with pytest.raises(ConfigValidationError):
+        AgentProfile.from_yaml(p)
 
 
 # ---- AgentProfile (direct construction) ----

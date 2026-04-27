@@ -17,9 +17,9 @@ from tests.DefenseAgent.agent._support import (
 )
 
 
-_MAYA_PROFILE = (
+_EXAMPLE_PROFILE = (
     Path(__file__).resolve().parent.parent.parent.parent
-    / "agents" / "maya_rodriguez" / "profile.yaml"
+    / "agents" / "example_agent" / "profile.yaml"
 )
 
 
@@ -123,7 +123,7 @@ async def _patched_from_profile(cls, profile: AgentProfile):
 async def test_from_profile_wires_every_component(monkeypatch: pytest.MonkeyPatch):
     """Agent.from_profile must construct every composed module against Maya's real bundle."""
     _set_env_for_real_construction(monkeypatch)
-    profile = AgentProfile.from_yaml(_MAYA_PROFILE)
+    profile = AgentProfile.from_yaml(_EXAMPLE_PROFILE)
 
     agent = await _patched_from_profile(ReActAgent, profile)
     try:
@@ -140,7 +140,7 @@ async def test_from_profile_wires_every_component(monkeypatch: pytest.MonkeyPatc
 async def test_from_profile_works_for_plan_and_solve(monkeypatch: pytest.MonkeyPatch):
     """from_profile must work on PlanAndSolveAgent too (same mechanism via classmethod)."""
     _set_env_for_real_construction(monkeypatch)
-    profile = AgentProfile.from_yaml(_MAYA_PROFILE)
+    profile = AgentProfile.from_yaml(_EXAMPLE_PROFILE)
 
     agent = await _patched_from_profile(PlanAndSolveAgent, profile)
     try:
@@ -156,7 +156,7 @@ async def test_from_profile_works_for_plan_and_solve(monkeypatch: pytest.MonkeyP
 async def test_from_profile_skips_rag_when_disabled(monkeypatch: pytest.MonkeyPatch):
     """profile.rag.enabled=False (Maya's default) → agent.rag is None and rag_search is not registered."""
     _set_env_for_real_construction(monkeypatch)
-    profile = AgentProfile.from_yaml(_MAYA_PROFILE)
+    profile = AgentProfile.from_yaml(_EXAMPLE_PROFILE)
     assert profile.rag.enabled is False
 
     agent = await _patched_from_profile(ReActAgent, profile)
@@ -173,7 +173,7 @@ async def test_from_profile_builds_rag_when_enabled(monkeypatch: pytest.MonkeyPa
     from unittest.mock import AsyncMock
 
     _set_env_for_real_construction(monkeypatch)
-    profile = AgentProfile.from_yaml(_MAYA_PROFILE)
+    profile = AgentProfile.from_yaml(_EXAMPLE_PROFILE)
     profile.rag.enabled = True
 
     fake_rag = MagicMock(name="LlamaIndexRAG")

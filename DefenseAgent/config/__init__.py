@@ -5,6 +5,7 @@ from DefenseAgent.config.profile import (
     ConfigFileNotFoundError,
     ConfigParseError,
     ConfigValidationError,
+    LLMConfig,
     MCPServerConfig,
     MemoryConfig,
     PromptConfig,
@@ -15,6 +16,7 @@ from DefenseAgent.config.profile import (
 __all__ = [
     "AgentProfile",
     "CognitiveConfig",
+    "LLMConfig",
     "MemoryConfig",
     "RAGConfig",
     "ToolsConfig",

@@ -40,12 +40,12 @@ def build_components_sync(config: AgentConfig) -> BuiltComponents:
     """Build everything that does not need `await`. MCP and RAG are deferred."""
     profile = config.resolved_profile()
 
-    # LLM: prefer injection, else build from env.
+    # LLM: prefer injection, else profile-then-env (per-field; profile wins where it's set).
     if config.llm is not None:
         llm = config.llm
     else:
-        llm = LLM.from_env(
-            dotenv_path=config.dotenv_path, load_env=config.load_env,
+        llm = LLM.from_profile(
+            profile, dotenv_path=config.dotenv_path, load_env=config.load_env,
         )
 
     # Memory: three-tier priority — fully built > pure-code backend > env.

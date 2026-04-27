@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 from typing import Any
 
@@ -8,6 +9,9 @@ from DefenseAgent.memory._bridge import _flat_llm_config_from_env
 from DefenseAgent.rag.base import RAGConfigError
 
 
+_DEFAULT_HF_EMBEDDING = "Qwen/Qwen3-Embedding-0.6B"
+
+
 def profile_to_rag_dictconfig(
     profile: AgentProfile,
     *,
@@ -16,18 +20,19 @@ def profile_to_rag_dictconfig(
 ) -> Any:
     """Translate our pydantic AgentProfile into the OmegaConf DictConfig that ms-agent's `LlamaIndexRAG` reads.
 
-    Carries a flat `llm` block (only consumed when `retrieve_only=False`, since ms-agent's RAG
-    falls back to its own LLM call for synthesis), the `rag` knobs subset (`embedding`, `chunk_size`,
-    `chunk_overlap`, `retrieve_only`, `storage_dir`), and a top-level `use_huggingface` flag that
-    tells ms-agent's `_setup_embedding_model` whether to skip modelscope's `snapshot_download`.
+    Embedding fields (`embedding`, `embedding_api_key`, `embedding_base_url`, `embedding_dims`) are resolved per-field with profile-first / env-fallback (mirrors the LLMConfig pattern); the resolved values land on the DictConfig so both the OpenAI-compat path and ms-agent's HuggingFace path see consistent inputs. Carries a flat `llm` block (only consumed when `retrieve_only=False`), the `rag` knobs subset, and a top-level `use_huggingface` flag.
     """
     rag_cfg = profile.rag
     storage_dir = _resolve_storage_path(profile, storage_path)
     documents_dir = _resolve_documents_path(profile, documents_path)
+    embedding = _resolve_embedding_fields(rag_cfg)
     config: dict[str, Any] = {
         "rag": {
-            "embedding": rag_cfg.embedding,
+            "embedding": embedding["model"],
             "embedding_provider": rag_cfg.embedding_provider,
+            "embedding_api_key": embedding["api_key"],
+            "embedding_base_url": embedding["base_url"],
+            "embedding_dims": embedding["dims"],
             "chunk_size": rag_cfg.chunk_size,
             "chunk_overlap": rag_cfg.chunk_overlap,
             "retrieve_only": rag_cfg.retrieve_only,
@@ -40,6 +45,41 @@ def profile_to_rag_dictconfig(
     if documents_dir is not None:
         config["documents_dir"] = str(documents_dir)
     return OmegaConf.create(config)
+
+
+def _resolve_embedding_fields(rag_cfg: Any) -> dict[str, Any]:
+    """Per-field profile-then-env resolution for the embedder. Profile values win when set + non-empty after `.strip()`; otherwise fall back to `EMBEDDING_MODEL` / `EMBEDDING_API_KEY` / `EMBEDDING_BASE_URL` / `EMBEDDING_DIMS` from .env. Returns a dict of resolved values; missing values come back as None or (for the HuggingFace model name fallback) the ms-agent default."""
+    model = _profile_or_env_str(rag_cfg.embedding, "EMBEDDING_MODEL")
+    api_key = _profile_or_env_str(rag_cfg.embedding_api_key, "EMBEDDING_API_KEY")
+    base_url = _profile_or_env_str(rag_cfg.embedding_base_url, "EMBEDDING_BASE_URL")
+    dims = _profile_or_env_int(rag_cfg.embedding_dims, "EMBEDDING_DIMS")
+    if rag_cfg.embedding_provider == "huggingface" and not model:
+        # The HF path needs *some* model; use the ms-agent default rather than crashing
+        # at index time. The OpenAI path defers the missing-key error to the resolver
+        # inside _install_openai_compat_embedding so the message stays accurate.
+        model = _DEFAULT_HF_EMBEDDING
+    return {"model": model, "api_key": api_key, "base_url": base_url, "dims": dims}
+
+
+def _profile_or_env_str(profile_value: str | None, env_var: str) -> str | None:
+    """Return the profile value when it's a non-empty string after `.strip()`; otherwise the env var; otherwise None."""
+    if isinstance(profile_value, str) and profile_value.strip():
+        return profile_value.strip()
+    raw = os.environ.get(env_var, "")
+    return raw.strip() if raw and raw.strip() else None
+
+
+def _profile_or_env_int(profile_value: int | None, env_var: str) -> int | None:
+    """Same as `_profile_or_env_str` but for the integer dim count; ignores unparseable env values."""
+    if isinstance(profile_value, int):
+        return profile_value
+    raw = os.environ.get(env_var, "").strip()
+    if not raw:
+        return None
+    try:
+        return int(raw)
+    except ValueError:
+        return None
 
 
 def _resolve_storage_path(

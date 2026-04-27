@@ -28,7 +28,7 @@ from DefenseAgent.ops import AgentLogger                             # ← front
 
 DEFAULT_PROFILE_PATH = (
     Path(__file__).resolve().parent.parent
-    / "agents" / "maya_rodriguez" / "profile.yaml"
+    / "agents" / "example_agent" / "profile.yaml"
 )
 
 

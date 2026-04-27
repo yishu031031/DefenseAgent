@@ -1,5 +1,5 @@
 import os
-from typing import AsyncIterator
+from typing import TYPE_CHECKING, AsyncIterator
 
 from dotenv import load_dotenv
 
@@ -12,6 +12,10 @@ from DefenseAgent.llm._registry import (
 from DefenseAgent.llm.base import LLMAdapter
 from DefenseAgent.llm.errors import LLMConfigError
 from DefenseAgent.llm.types import LLMResponse, Message, StreamChunk
+
+
+if TYPE_CHECKING:
+    from DefenseAgent.config.profile import AgentProfile
 
 
 class LLM:
@@ -76,16 +80,50 @@ class LLM:
         Convenience wrapper: parses environment variables, then defers all
         actual instantiation to `from_kwargs`.
         """
+        return cls.from_profile(profile=None, dotenv_path=dotenv_path, load_env=load_env)
+
+    @classmethod
+    def from_profile(
+        cls,
+        profile: "AgentProfile | None",
+        *,
+        dotenv_path: str | None = None,
+        load_env: bool = True,
+    ) -> "LLM":
+        """Build an LLM with profile values taking precedence over .env, per field. When `profile.llm` populates a field that field is used; missing fields fall back to env (`AGENT_LAB_LLM_PROVIDER`, `<PROVIDER>_API_KEY`, `<PROVIDER>_BASE_URL`, `<PROVIDER>_MODEL`, with the cross-provider `LLM_*` tier as the second-tier env fallback). Pass `profile=None` for pure env-driven construction (equivalent to `from_env`)."""
         if load_env:
             load_dotenv(dotenv_path, override=False)
 
-        provider = _resolve_provider_from_env()
-        api_key, base_url, model = _resolve_fields_from_env(provider)
+        llm_cfg = profile.llm if profile is not None else None
+        provider = _profile_or_env(
+            llm_cfg.provider if llm_cfg is not None else None,
+            os.environ.get("AGENT_LAB_LLM_PROVIDER"),
+        )
+        if not provider:
+            raise LLMConfigError(
+                "AGENT_LAB_LLM_PROVIDER is not set and profile.llm.provider is empty. "
+                "Set one in your .env or in the agent profile."
+            )
+        provider = provider.strip().lower()
+
+        env_api_key, env_base_url, env_model = _resolve_fields_from_env(provider)
+        api_key = _profile_or_env(
+            llm_cfg.api_key if llm_cfg is not None else None,
+            env_api_key,
+        )
+        base_url = _profile_or_env(
+            llm_cfg.base_url if llm_cfg is not None else None,
+            env_base_url,
+        )
+        model = _profile_or_env(
+            llm_cfg.model if llm_cfg is not None else None,
+            env_model,
+        )
         return cls.from_kwargs(
             provider=provider,
-            api_key=api_key,
+            api_key=api_key or "",
             base_url=base_url or None,
-            model=model,
+            model=model or "",
         )
 
     async def chat(
@@ -125,21 +163,17 @@ class LLM:
         )
 
 
-def _resolve_provider_from_env() -> str:
-    """Read AGENT_LAB_LLM_PROVIDER from the environment, normalize, and return.
-
-    Raises LLMConfigError when unset; full provider-list validation is deferred
-    to `_validate_provider` inside `from_kwargs` so the supported-list message
-    has one canonical home.
-    """
-    raw = os.environ.get("AGENT_LAB_LLM_PROVIDER", "")
-    provider = raw.strip().lower()
-    if not provider:
-        raise LLMConfigError(
-            "AGENT_LAB_LLM_PROVIDER is not set. "
-            "Set it in your .env, or use LLM.from_kwargs(provider=...) directly."
-        )
-    return provider
+def _profile_or_env(profile_value: str | None, env_value: str | None) -> str | None:
+    """Profile value wins when set + non-empty; else fall back to env. Returns None when both are empty so callers can decide whether the missing field is fatal."""
+    if profile_value:
+        stripped = profile_value.strip()
+        if stripped:
+            return stripped
+    if env_value:
+        stripped = env_value.strip()
+        if stripped:
+            return stripped
+    return None
 
 
 def _resolve_fields_from_env(provider: str) -> tuple[str, str, str]:

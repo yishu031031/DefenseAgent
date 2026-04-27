@@ -184,21 +184,22 @@ def test_extra_instructions_blank_is_ignored():
     assert agent._identity_prompt() == "You are Maya."
 
 
-# ---------- end-to-end via Maya's real bundle ----------
+# ---------- end-to-end via the shipped example_agent bundle ----------
 
 
-_MAYA_PROFILE = (
+_EXAMPLE_PROFILE = (
     Path(__file__).resolve().parent.parent.parent.parent
-    / "agents" / "maya_rodriguez" / "profile.yaml"
+    / "agents" / "example_agent" / "profile.yaml"
 )
 
 
-@pytest.mark.skipif(not _MAYA_PROFILE.is_file(), reason="Maya bundle not present")
-def test_maya_bundle_loads_path_prompt_with_substitution():
-    profile = AgentProfile.from_yaml(_MAYA_PROFILE)
+@pytest.mark.skipif(not _EXAMPLE_PROFILE.is_file(), reason="example_agent bundle not present")
+def test_example_bundle_loads_path_prompt_with_substitution():
+    """The shipped reference profile uses `prompt.path: prompts/system.md` plus `{name}`/`{age}` placeholders — verify substitution wires up end-to-end against the actual on-disk bundle."""
+    profile = AgentProfile.from_yaml(_EXAMPLE_PROFILE)
     assert profile.prompt.path == "prompts/system.md"
     agent = _build_agent(profile)
     rendered = agent._identity_prompt()
-    assert "Maya Rodriguez" in rendered
-    assert "20-year-old" in rendered
+    assert profile.name in rendered
+    assert f"{profile.age}-year-old" in rendered
     assert "{name}" not in rendered  # placeholders all filled

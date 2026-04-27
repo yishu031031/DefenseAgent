@@ -1,9 +1,9 @@
-"""Reflection module demo — Maya observes, then reflects.
+"""Reflection module demo — The example agent observes, then reflects.
 
 Exercises all five front-door classes together:
-  • AgentProfile (Module 2) — Maya's identity + cognitive.reflection_threshold.
+  • AgentProfile (Module 2) — the agent's identity + cognitive.reflection_threshold.
   • LLM          (Module 1) — rates importance + synthesizes insights.
-  • Memory       (Module 4) — holds Maya's day.
+  • Memory       (Module 4) — holds the agent's day.
   • AgentLogger  (Module 3) — records each reflect_now() call.
   • Reflector    (Module 5) — the new piece: reads memories, prompts LLM, writes back.
 
@@ -42,12 +42,12 @@ from DefenseAgent.reflection import Reflector
 
 DEFAULT_PROFILE_PATH = (
     Path(__file__).resolve().parent.parent
-    / "agents" / "maya_rodriguez" / "profile.yaml"
+    / "agents" / "example_agent" / "profile.yaml"
 )
 
 _NOW = datetime(2026, 4, 22, 18, 0, tzinfo=timezone.utc)
 
-# Observations from Maya's day. hours_ago is used to back-date the memory
+# Observations from the agent's day. hours_ago is used to back-date the memory
 # so the reflection has a realistic chronological spread.
 OBSERVATIONS = [
     ("Attended the 9 AM data structures lecture, covered binary search trees.", 9),
@@ -150,14 +150,14 @@ async def main() -> int:
         "reflection.finished", "insights stored", count=len(new_reflections),
     )
 
-    print(f"\n[demo] Maya's reflections ({len(new_reflections)}):")
+    print(f"\n[demo] The agent's reflections ({len(new_reflections)}):")
     print("=" * 72)
     for r in new_reflections:
         print(f"  • {r.content}")
     print("=" * 72)
 
     # --- Step 7: retrieval now includes reflections ---------------------
-    query = "what patterns are emerging in how Maya studies?"
+    query = "what patterns are emerging in how the agent works?"
     print(f"\n[demo] query: {query!r}")
     results = await memory.recall(query, top_k=5)
     for s in results:

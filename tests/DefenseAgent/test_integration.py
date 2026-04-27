@@ -21,10 +21,10 @@ from DefenseAgent.ops import AgentLogger
 from DefenseAgent.tools import ToolRegistry
 
 
-def _maya_profile_path() -> Path:
+def _example_profile_path() -> Path:
     return (
         Path(__file__).resolve().parent.parent.parent
-        / "agents" / "maya_rodriguez" / "profile.yaml"
+        / "agents" / "example_agent" / "profile.yaml"
     )
 
 
@@ -74,21 +74,21 @@ def _build_system_prompt(profile: AgentProfile) -> str:
 # ============================================================
 
 
-def test_shipped_student_profile_parses():
-    """Regression guard: editing maya_rodriguez.yaml must keep it valid."""
-    profile = AgentProfile.from_yaml(_maya_profile_path())
-    assert profile.name == "Maya Rodriguez"
-    assert profile.age == 20
-    assert "Computer Science" in profile.backstory
-    assert profile.cognitive.max_steps_per_cycle == 8
-    assert profile.memory.search_limit == 8
+def test_shipped_example_profile_parses():
+    """Regression guard: editing example_agent/profile.yaml must keep it valid."""
+    profile = AgentProfile.from_yaml(_example_profile_path())
+    assert profile.name == "Nova Patel"
+    assert profile.age == 27
+    assert "field engineer" in profile.backstory
+    assert profile.cognitive.max_steps_per_cycle == 10
+    assert profile.memory.search_limit == 10
     assert profile.memory.history_mode == "add"
 
 
-async def test_student_profile_fields_reach_adapter_system_prompt():
-    profile = AgentProfile.from_yaml(_maya_profile_path())
+async def test_example_profile_fields_reach_adapter_system_prompt():
+    profile = AgentProfile.from_yaml(_example_profile_path())
     system = _build_system_prompt(profile)
-    adapter = StubLLMAdapter(canned="I just finished the data structures homework set.")
+    adapter = StubLLMAdapter(canned="The pipeline alerts cleared an hour ago.")
 
     resp = await adapter.chat(
         [Message(role="user", content="What have you been up to this afternoon?")],
@@ -96,13 +96,13 @@ async def test_student_profile_fields_reach_adapter_system_prompt():
     )
 
     call = adapter.calls[0]
-    assert "Maya Rodriguez" in call["system"]
-    assert "20" in call["system"]
-    assert "curious, persistent, collaborative" in call["system"]
-    assert "Computer Science" in call["system"]
+    assert "Nova Patel" in call["system"]
+    assert "27" in call["system"]
+    assert "curious, methodical, candid" in call["system"]
+    assert "field engineer" in call["system"]
     assert call["temperature"] == 0.5
     assert call["max_tokens"] == 200
-    assert resp.content == "I just finished the data structures homework set."
+    assert resp.content == "The pipeline alerts cleared an hour ago."
 
 
 _INLINE_STUDENT_YAML = """\
@@ -165,7 +165,7 @@ agent:
 
 
 async def test_logger_records_both_ends_of_a_chat_call(tmp_path):
-    profile = AgentProfile.from_yaml(_maya_profile_path())
+    profile = AgentProfile.from_yaml(_example_profile_path())
     log_file = tmp_path / "maya.log"
     logger = AgentLogger.from_profile(
         profile, stream=None, log_file=log_file, level=logging.INFO,
@@ -182,8 +182,8 @@ async def test_logger_records_both_ends_of_a_chat_call(tmp_path):
     records = _read_log(log_file)
     assert len(records) == 2
     req, res = records
-    assert req["agent_id"] == "student_maya_001"
-    assert res["agent_id"] == "student_maya_001"
+    assert req["agent_id"] == "example_agent_001"
+    assert res["agent_id"] == "example_agent_001"
     assert req["event_type"] == "llm.request"
     assert req["data"]["messages_count"] == 1
     assert req["data"]["max_tokens"] == 200
@@ -193,7 +193,7 @@ async def test_logger_records_both_ends_of_a_chat_call(tmp_path):
 
 
 async def test_logger_records_provider_error_without_crashing(tmp_path):
-    profile = AgentProfile.from_yaml(_maya_profile_path())
+    profile = AgentProfile.from_yaml(_example_profile_path())
     log_file = tmp_path / "maya.log"
     logger = AgentLogger.from_profile(
         profile, stream=None, log_file=log_file, level=logging.INFO,
@@ -225,9 +225,9 @@ async def test_logger_records_provider_error_without_crashing(tmp_path):
 # ============================================================
 
 
-async def test_tools_from_profile_loads_maya_bundle_skill():
+async def test_tools_from_profile_loads_example_bundle_skill():
     """ToolRegistry.from_profile resolves skill paths relative to the profile's directory."""
-    profile = AgentProfile.from_yaml(_maya_profile_path())
+    profile = AgentProfile.from_yaml(_example_profile_path())
     assert profile.tools.skills == ["skills/tabular-report"]
 
     async with await ToolRegistry.from_profile(profile) as registry:
@@ -242,7 +242,7 @@ async def test_tools_from_profile_loads_maya_bundle_skill():
 
 async def test_tools_from_profile_serves_layer_2_body_from_disk():
     """Layer 2: an empty-args call returns the SKILL.md body verbatim."""
-    profile = AgentProfile.from_yaml(_maya_profile_path())
+    profile = AgentProfile.from_yaml(_example_profile_path())
     async with await ToolRegistry.from_profile(profile) as registry:
         results = await registry.execute(
             [ToolCall(id="c1", name="tabular-report", arguments={})]
@@ -258,7 +258,7 @@ async def test_tools_from_profile_serves_layer_2_body_from_disk():
 
 async def test_tools_from_profile_serves_layer_3_asset_from_bundle():
     """Layer 3: a `file` arg returns the contents of that asset inside the bundle."""
-    profile = AgentProfile.from_yaml(_maya_profile_path())
+    profile = AgentProfile.from_yaml(_example_profile_path())
     async with await ToolRegistry.from_profile(profile) as registry:
         results = await registry.execute(
             [
@@ -277,7 +277,7 @@ async def test_tools_from_profile_serves_layer_3_asset_from_bundle():
 
 async def test_tools_from_profile_rejects_path_escape_as_tool_error():
     """Escape attempts become role='tool' error Messages, not exceptions."""
-    profile = AgentProfile.from_yaml(_maya_profile_path())
+    profile = AgentProfile.from_yaml(_example_profile_path())
     async with await ToolRegistry.from_profile(profile) as registry:
         results = await registry.execute(
             [
@@ -310,7 +310,7 @@ async def test_full_stack_profile_memory_tools_compose(monkeypatch):
     monkeypatch.setenv("EMBEDDING_MODEL", "text-embedding-3-small")
     monkeypatch.setenv("EMBEDDING_DIMS", "1536")
 
-    profile = AgentProfile.from_yaml(_maya_profile_path())
+    profile = AgentProfile.from_yaml(_example_profile_path())
 
     from DefenseAgent.memory.default_memory import DefaultMemory
     from DefenseAgent.agent import ReActAgent

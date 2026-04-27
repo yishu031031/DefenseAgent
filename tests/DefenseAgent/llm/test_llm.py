@@ -485,6 +485,123 @@ def test_openai_allows_empty_base_url(monkeypatch):
 
 
 # ============================================================
+# LLM.from_profile — profile-then-env per-field resolution
+# ============================================================
+
+
+def _make_profile(**llm_kwargs) -> "object":
+    """Build an in-memory AgentProfile whose `llm` block carries `llm_kwargs`. Imported lazily so this test file doesn't pull config types in unless we hit this section."""
+    from DefenseAgent.config import AgentProfile, LLMConfig
+    return AgentProfile(
+        id="test", name="T", age=20, traits="t",
+        backstory="b", initial_plan="p",
+        llm=LLMConfig(**llm_kwargs),
+    )
+
+
+def test_from_profile_uses_profile_when_fully_populated(monkeypatch):
+    """Empty env, fully-populated profile → all fields come from the profile."""
+    profile = _make_profile(
+        provider="openai",
+        api_key="sk-from-profile",
+        base_url="https://from-profile.example/v1",
+        model="gpt-from-profile",
+    )
+    llm = LLM.from_profile(profile)
+    assert isinstance(llm.adapter, OpenAICompatibleAdapter)
+    assert llm.adapter.model == "gpt-from-profile"
+
+
+def test_from_profile_falls_back_to_env_when_profile_is_empty(monkeypatch):
+    """Profile with no llm block → behaves identically to from_env."""
+    _set(
+        monkeypatch,
+        AGENT_LAB_LLM_PROVIDER="openai",
+        OPENAI_API_KEY="sk-from-env",
+        OPENAI_MODEL="gpt-from-env",
+    )
+    profile = _make_profile()
+    llm = LLM.from_profile(profile)
+    assert isinstance(llm.adapter, OpenAICompatibleAdapter)
+    assert llm.adapter.model == "gpt-from-env"
+
+
+def test_from_profile_partial_overrides_env_per_field(monkeypatch):
+    """Profile sets `provider` and `model`; env supplies `api_key` and `base_url` for that provider."""
+    _set(
+        monkeypatch,
+        AGENT_LAB_LLM_PROVIDER="anthropic",  # overridden by profile
+        ANTHROPIC_API_KEY="sk-anthropic-from-env",
+        ANTHROPIC_BASE_URL="https://anthropic.from-env",
+        ANTHROPIC_MODEL="claude-from-env",  # overridden by profile
+        OPENAI_API_KEY="sk-openai-from-env",
+        OPENAI_BASE_URL="https://openai.from-env",
+        OPENAI_MODEL="gpt-from-env",
+    )
+    profile = _make_profile(provider="openai", model="gpt-from-profile")
+    llm = LLM.from_profile(profile)
+    assert isinstance(llm.adapter, OpenAICompatibleAdapter)
+    assert llm.adapter.model == "gpt-from-profile"
+    # api_key and base_url come from env (under the OPENAI_* block, not ANTHROPIC_*).
+    assert llm.adapter._client.api_key == "sk-openai-from-env"
+
+
+def test_from_profile_provider_winner_drives_env_lookup_block(monkeypatch):
+    """When profile picks a different provider than env, the per-provider env keys for the *profile's* provider are used."""
+    _set(
+        monkeypatch,
+        AGENT_LAB_LLM_PROVIDER="anthropic",
+        ANTHROPIC_API_KEY="sk-ant-env",
+        ANTHROPIC_MODEL="claude-env",
+        DEEPSEEK_API_KEY="sk-ds-env",
+        DEEPSEEK_BASE_URL="https://api.deepseek.com/v1",
+        DEEPSEEK_MODEL="deepseek-env",
+    )
+    profile = _make_profile(provider="deepseek")
+    llm = LLM.from_profile(profile)
+    assert isinstance(llm.adapter, OpenAICompatibleAdapter)
+    assert llm.adapter.model == "deepseek-env"
+
+
+def test_from_profile_none_is_equivalent_to_from_env(monkeypatch):
+    _set(
+        monkeypatch,
+        AGENT_LAB_LLM_PROVIDER="openai",
+        OPENAI_API_KEY="sk-x", OPENAI_MODEL="gpt-x",
+    )
+    via_profile = LLM.from_profile(None)
+    via_env = LLM.from_env()
+    assert type(via_profile.adapter) is type(via_env.adapter)
+    assert via_profile.adapter.model == via_env.adapter.model
+
+
+def test_from_profile_raises_when_neither_profile_nor_env_has_provider(monkeypatch):
+    profile = _make_profile()
+    with pytest.raises(LLMConfigError):
+        LLM.from_profile(profile)
+
+
+def test_from_profile_rejects_invalid_provider(monkeypatch):
+    profile = _make_profile(provider="not-a-real-provider", api_key="x", model="y")
+    with pytest.raises(LLMConfigError):
+        LLM.from_profile(profile)
+
+
+def test_from_profile_treats_blank_strings_as_unset(monkeypatch):
+    """Profile fields are stripped; whitespace-only values fall back to env (so a half-edited YAML doesn't override good env state)."""
+    _set(
+        monkeypatch,
+        AGENT_LAB_LLM_PROVIDER="openai",
+        OPENAI_API_KEY="sk-from-env",
+        OPENAI_MODEL="gpt-from-env",
+    )
+    profile = _make_profile(provider="   ", model="   ")
+    llm = LLM.from_profile(profile)
+    assert isinstance(llm.adapter, OpenAICompatibleAdapter)
+    assert llm.adapter.model == "gpt-from-env"
+
+
+# ============================================================
 # LLM facade — chat_stream delegation
 # ============================================================
 

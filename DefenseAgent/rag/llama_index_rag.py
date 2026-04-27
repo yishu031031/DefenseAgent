@@ -1,4 +1,3 @@
-import os
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -203,8 +202,12 @@ class LlamaIndexRAG(MsLlamaIndexRAG):
         super()._setup_embedding_model(config)
 
     def _install_openai_compat_embedding(self) -> None:
-        """Wire `Settings.embed_model` to llama-index's `OpenAILikeEmbedding`, reading the same EMBEDDING_API_KEY/BASE_URL/MODEL/DIMS env vars mem0 already uses; raises RAGConfigError when those are missing or `llama-index-embeddings-openai-like` is not installed."""
-        api_key, base_url, model, dims = _read_embedding_env()
+        """Wire `Settings.embed_model` to llama-index's `OpenAILikeEmbedding`, reading the embedder fields already resolved (profile-first / env-fallback) on `self.config.rag` by `profile_to_rag_dictconfig`. Raises RAGConfigError when the resolved config is missing required fields or `llama-index-embeddings-openai-like` is not installed."""
+        rag_cfg = self.config.rag
+        model = _require(getattr(rag_cfg, "embedding", None), "EMBEDDING_MODEL", "embedding")
+        api_key = _require(getattr(rag_cfg, "embedding_api_key", None), "EMBEDDING_API_KEY", "embedding_api_key")
+        base_url = getattr(rag_cfg, "embedding_base_url", None) or None
+        dims = getattr(rag_cfg, "embedding_dims", None)
         try:
             from llama_index.core import Settings
             from llama_index.embeddings.openai_like import OpenAILikeEmbedding
@@ -226,24 +229,14 @@ class LlamaIndexRAG(MsLlamaIndexRAG):
         self.embedding_model = model
 
 
-def _read_embedding_env() -> tuple[str, str, str, int | None]:
-    """Pull EMBEDDING_API_KEY/BASE_URL/MODEL/DIMS from the process env (same shape mem0's bridge consumes); raises RAGConfigError when required fields are missing."""
-    api_key = os.environ.get("EMBEDDING_API_KEY", "")
-    base_url = os.environ.get("EMBEDDING_BASE_URL", "")
-    model = os.environ.get("EMBEDDING_MODEL", "")
-    if not api_key or not model:
-        raise RAGConfigError(
-            "EMBEDDING_API_KEY and EMBEDDING_MODEL must be set in .env "
-            "for OpenAI-compatible RAG embedding"
-        )
-    raw_dims = os.environ.get("EMBEDDING_DIMS", "").strip()
-    dims: int | None = None
-    if raw_dims:
-        try:
-            dims = int(raw_dims)
-        except ValueError:
-            dims = None
-    return api_key, base_url, model, dims
+def _require(value: Any, env_var: str, profile_field: str) -> str:
+    """Resolved-value getter for the OpenAI-compat embedder. The bridge already did profile-then-env resolution; if the field is still missing here, neither the profile nor .env supplied it — raise with both candidate sources named."""
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    raise RAGConfigError(
+        f"OpenAI-compatible RAG embedding requires `{env_var}` (or "
+        f"`profile.rag.{profile_field}`) to be set"
+    )
 
 
 def _collect_document_files(directory: Path) -> list[Path]:

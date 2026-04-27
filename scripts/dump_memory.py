@@ -1,10 +1,10 @@
 """Pretty-print an agent's memory stream in chronological order (no embeddings).
 
 Usage:
-    python scripts/dump_memory.py                                  # defaults to Maya's stream
+    python scripts/dump_memory.py                                  # defaults to the example agent's stream
     python scripts/dump_memory.py agents/alice_chen/memory/stream.db
-    python scripts/dump_memory.py agents/maya_rodriguez/memory/stream.db --kind observation
-    python scripts/dump_memory.py agents/maya_rodriguez/memory/stream.db --limit 20
+    python scripts/dump_memory.py agents/example_agent/memory/stream.db --kind observation
+    python scripts/dump_memory.py agents/example_agent/memory/stream.db --limit 20
 
 Reads the SQLite file directly — no LLM calls, no embedding decode. Each record
 prints as one block:
@@ -26,7 +26,7 @@ from pathlib import Path
 
 DEFAULT_DB = (
     Path(__file__).resolve().parent.parent
-    / "agents" / "maya_rodriguez" / "memory" / "stream.db"
+    / "agents" / "example_agent" / "memory" / "stream.db"
 )
 
 
@@ -48,7 +48,7 @@ def main(argv: list[str]) -> int:
         "path",
         nargs="?",
         default=str(DEFAULT_DB),
-        help="Path to stream.db (defaults to Maya's agent bundle).",
+        help="Path to stream.db (defaults to the example agent's bundle).",
     )
     parser.add_argument(
         "--kind",

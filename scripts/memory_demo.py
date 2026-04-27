@@ -1,4 +1,4 @@
-"""Memory module demo — a day in Maya's life.
+"""Memory module demo — a day in the example agent's life.
 
 Builds up a stream of memories spanning every kind (observation / fact /
 preference / plan / reflection), then runs three queries to show the hybrid
@@ -7,7 +7,7 @@ ranking is inspectable.
 
 Uses real embeddings (the configured EMBEDDING_* provider in .env), and
 exercises all four module front doors:
-  • AgentProfile (Module 2) loads Maya.
+  • AgentProfile (Module 2) loads the example agent.
   • AgentLogger  (Module 3) records each add()/recall() event.
   • Memory       (Module 4) is the unified memory surface.
 
@@ -35,7 +35,7 @@ from DefenseAgent.ops import AgentLogger                              # ← fron
 
 DEFAULT_PROFILE_PATH = (
     Path(__file__).resolve().parent.parent
-    / "agents" / "maya_rodriguez" / "profile.yaml"
+    / "agents" / "example_agent" / "profile.yaml"
 )
 
 _NOW = datetime(2026, 4, 22, 18, 0, tzinfo=timezone.utc)  # reference "now"

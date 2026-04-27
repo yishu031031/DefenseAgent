@@ -65,7 +65,7 @@ from DefenseAgent.config import AgentProfile
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-MAYA_PROFILE = PROJECT_ROOT / "agents" / "maya_rodriguez" / "profile.yaml"
+EXAMPLE_PROFILE = PROJECT_ROOT / "agents" / "example_agent" / "profile.yaml"
 
 
 # ---------- Tool 1: safe arithmetic calculator ----------
@@ -200,7 +200,7 @@ async def _run_turn(agent: ReActAgent, turn: int, task: str) -> None:
     except Exception as e:
         print(f"[demo] turn {turn} raised {type(e).__name__}: {e}")
         return
-    print(f"Maya : {result.final_answer}")
+    print(f"{agent.profile.name} : {result.final_answer}")
     print("Trace:")
     _print_step_trace(result.steps)
     print(
@@ -224,7 +224,7 @@ async def main() -> int:
     if not os.environ.get("TAVILY_API_KEY"):
         print("[demo] TAVILY_API_KEY missing in .env — Tavily turn will return an error string.")
 
-    profile = AgentProfile.from_yaml(MAYA_PROFILE)
+    profile = AgentProfile.from_yaml(EXAMPLE_PROFILE)
 
     if args.keep_memory:
         memory_dir: Path | None = None
