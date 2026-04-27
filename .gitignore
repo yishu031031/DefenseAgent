@@ -7,6 +7,10 @@ __pycache__/
 .venv3/
 venv/
 *.egg-info/
+
+# Build artifacts (sdist + wheel produced by `python -m build`)
+build/
+dist/
 .DS_Store
 .ruff_cache/
 .mypy_cache/

@@ -1,0 +1,97 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "defense-agent"
+version = "0.1.0"
+description = "Multi-LLM agent framework with mem0-backed memory, llama-index RAG, MCP tool support, and reflection."
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.10"
+authors = [{ name = "Kevin" }]
+keywords = ["agent", "llm", "rag", "mem0", "mcp", "anthropic", "openai"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+
+# Core deps — required to import DefenseAgent and run a SimpleAgent against
+# any supported LLM provider. Memory, RAG, and MCP are pulled in by extras.
+dependencies = [
+    "pydantic>=2.0",
+    "pyyaml>=6.0",
+    "python-dotenv>=1.0.0",
+    "numpy>=1.26",
+    "anthropic>=0.40.0",
+    "openai>=1.50.0",
+    "ms-agent>=1.6.0",
+    "omegaconf>=2.3.0",
+    "loguru>=0.7.0",
+]
+
+[project.optional-dependencies]
+# mem0 + qdrant-based persistent memory. Heavy: pulls torch via modelscope.
+memory = [
+    "mem0ai>=2.0.0",
+    "fastembed>=0.4.0",
+]
+
+# LlamaIndex-backed RAG with optional BM25 hybrid retrieval and structured
+# document extraction (PDF/HTML with images/tables).
+rag = [
+    "llama-index-core>=0.10",
+    "llama-index-embeddings-openai-like>=0.1",
+    "llama-index-retrievers-bm25>=0.5.0",
+    "pdfplumber>=0.11",
+    "beautifulsoup4>=4.12",
+    "Pillow>=10.0",
+]
+
+# MCP (Model Context Protocol) tool servers.
+mcp = [
+    "mcp>=1.0.0",
+]
+
+# Test + lint stack.
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.23.0",
+]
+
+# Convenience: install everything (closest to the legacy requirements.txt).
+all = [
+    "defense-agent[memory,rag,mcp]",
+]
+
+[project.urls]
+Homepage = "https://github.com/Kevin/DefenseAgent"
+Repository = "https://github.com/Kevin/DefenseAgent"
+Issues = "https://github.com/Kevin/DefenseAgent/issues"
+
+# ---- hatch build config -------------------------------------------------
+
+[tool.hatch.build.targets.wheel]
+packages = ["DefenseAgent"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "DefenseAgent",
+    "agents/example_agent",
+    "README.md",
+    "README_zh.md",
+    "LICENSE",
+    "pyproject.toml",
+]
+
+# ---- pytest -------------------------------------------------------------
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]

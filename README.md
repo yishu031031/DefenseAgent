@@ -2,13 +2,12 @@
 
 > English · [中文 README](README_zh.md)
 
-A multi-LLM agent framework with mem0-backed memory, llama-index-backed RAG, MCP tool support, and reflection. Build a working agent from a YAML profile in three lines, swap LLM providers without touching code, and inject mocks cleanly for tests.
+A multi-LLM agent framework with mem0-backed memory, llama-index-backed RAG, MCP tool support, and reflection. Build a working agent from a YAML profile in **two lines**, swap LLM providers without touching code, and inject mocks cleanly for tests.
 
 ```python
-from DefenseAgent import AgentConfig, ReActAgent
+from DefenseAgent import create_agent
 
-config = AgentConfig(profile="agents/maya_rodriguez/profile.yaml")
-agent = ReActAgent(config)
+agent = create_agent("agents/maya_rodriguez/profile.yaml")
 result = await agent.run("What did I work on this morning?")
 print(result.final_answer)
 ```
@@ -29,6 +28,8 @@ print(result.final_answer)
 
 ## Installation
 
+The project is now packaged with `pyproject.toml`. **Editable install for local development:**
+
 ```bash
 git clone <repo-url>
 cd DefenseAgent
@@ -37,10 +38,25 @@ python -m venv .venv3
 .venv3/Scripts/activate          # Windows
 # source .venv3/bin/activate     # macOS / Linux
 
-pip install -r requirements.txt
+pip install -e ".[all,dev]"      # core + memory + rag + mcp + tests
 ```
 
-The full stack pulls in `ms-agent`, `mem0ai`, `llama-index-core`, `qdrant-client`, `torch` (via modelscope) and friends — about 1 GB on disk. PyPI packaging that splits this into optional extras is on the roadmap.
+### Pick your extras
+
+Core install (~100 MB) only ships LLM + profile + tools — enough for `SimpleAgent` chat. Memory, RAG, and MCP are opt-in extras to avoid pulling `torch` / `qdrant-client` / `llama-index` when you don't need them:
+
+```bash
+pip install -e .                  # core only — LLM + profile + tools
+pip install -e ".[memory]"        # + mem0 + qdrant + fastembed
+pip install -e ".[rag]"           # + llama-index + pdfplumber + bs4
+pip install -e ".[mcp]"           # + MCP client
+pip install -e ".[all]"           # everything user-facing
+pip install -e ".[all,dev]"       # + pytest
+```
+
+> The full stack (`[all]`) pulls in `ms-agent`, `mem0ai`, `llama-index-core`, `qdrant-client`, `torch` (via modelscope) and friends — about 1 GB on disk.
+
+PyPI publishing (`pip install defense-agent`) is on the near-term roadmap once the API stabilizes.
 
 ---
 
@@ -111,7 +127,46 @@ See [agents/maya_rodriguez/](agents/maya_rodriguez/) and [agents/alice_chen/](ag
 
 ## Quick Start
 
-### Conversation with role-played agent
+### One-shot factory
+
+The simplest path: pass a profile YAML path, get a working agent.
+
+```python
+import asyncio
+from DefenseAgent import create_agent
+
+async def main():
+    agent = create_agent("agents/maya_rodriguez/profile.yaml")
+    result = await agent.run("It's 2 PM. What have you been doing today?")
+    print(result.final_answer)
+    await agent.close()
+
+asyncio.run(main())
+```
+
+`create_agent(...)` accepts three input shapes — pick whatever fits the call site:
+
+```python
+from DefenseAgent import AgentConfig, create_agent
+
+# 1. Profile path (str or pathlib.Path)
+agent = create_agent("agents/maya_rodriguez/profile.yaml")
+
+# 2. dict — forwarded to AgentConfig(**dict)
+agent = create_agent({
+    "profile": "agents/maya_rodriguez/profile.yaml",
+    "tools": [calculator],
+    "use_rag": True,
+})
+
+# 3. Pre-built AgentConfig — when you need full control
+config = AgentConfig(profile="...", tools=[calculator], use_rag=True)
+agent = create_agent(config, strategy="plan_and_solve")
+```
+
+The `strategy` kwarg picks the agent class — `"react"` (default), `"simple"`, or `"plan_and_solve"`.
+
+### Manual construction (full control)
 
 ```python
 import asyncio
@@ -129,7 +184,7 @@ asyncio.run(main())
 ### Pure-code construction (no .env)
 
 ```python
-from DefenseAgent import AgentConfig, ReActAgent
+from DefenseAgent import AgentConfig, create_agent
 from DefenseAgent.llm import LLM
 from DefenseAgent.memory import MemoryBackendConfig
 
@@ -142,27 +197,27 @@ backend = MemoryBackendConfig(
     embedding_api_key="sk-...", embedding_model="text-embedding-3-small",
     embedding_base_url="https://api.openai.com/v1", embedding_dims=1536,
 )
-config = AgentConfig(
+agent = create_agent(AgentConfig(
     profile="agents/maya_rodriguez/profile.yaml",
     llm=llm,
     memory_backend=backend,
     load_env=False,
-)
-agent = ReActAgent(config)
+))
 ```
 
 ### Adding tools
 
 ```python
+from DefenseAgent import create_agent
+
 def calculator(expression: str) -> str:
     """Evaluate a math expression and return the numeric result."""
     return str(eval(expression))   # toy demo only
 
-config = AgentConfig(
-    profile="agents/maya_rodriguez/profile.yaml",
-    tools=[calculator],
-)
-agent = ReActAgent(config)
+agent = create_agent({
+    "profile": "agents/maya_rodriguez/profile.yaml",
+    "tools": [calculator],
+})
 ```
 
 The function's name + docstring + signature become its JSON-schema tool spec the LLM sees.
@@ -211,10 +266,11 @@ DefenseAgent/
 │   ├── superpowers/specs/    # design docs (one per module)
 │   └── walkthroughs/         # user guides (one per module)
 ├── scripts/                  # runnable demos (see below)
-├── tests/                    # pytest suite — 397 / 398 passing
+├── tests/                    # pytest suite — 482 / 483 passing
 ├── .env.example
-├── pytest.ini
-└── requirements.txt
+├── pyproject.toml            # packaging + pytest config
+├── LICENSE                   # MIT
+└── requirements.txt          # legacy pinned list (extras live in pyproject.toml)
 ```
 
 ---
@@ -283,10 +339,9 @@ Every agent is built via `Agent(config)` where `config: AgentConfig`. The legacy
 
 Major SDK-readiness items still open:
 
-- **`pyproject.toml`** — make this `pip install`-able with `[memory]`, `[rag]`, `[dev]` extras
-- **Top-level `__init__.py` lazy imports** — currently imports the agent module eagerly, which transitively pulls in torch via modelscope
-- **PEP 8 package rename** — `DefenseAgent/` → `defense_agent/`
-- **`create_agent()` one-line factory** — collapse `AgentConfig + Agent(config)` into one call
+- **PyPI publication** — `pip install defense-agent` (currently `pip install -e .` for local dev)
+- **Top-level `__init__.py` lazy imports** — defer the `agent` import so `from DefenseAgent import AgentProfile` doesn't transitively pull in torch via modelscope
+- **PEP 8 package rename** — `DefenseAgent/` → `defense_agent/` (import name follows PEP 8; PyPI dist name is already `defense-agent`)
 - **Multi-agent communication** — in-process `AgentBus` + `AgentSwarm` so agents can call each other as tools
 - **Retry / timeout / logging in the LLM facade** — push the cross-cutting concerns up from each adapter
 
@@ -296,4 +351,4 @@ See `docs/superpowers/specs/` for the per-module design rationale.
 
 ## License
 
-TBD — add a LICENSE file before publishing.
+[MIT](LICENSE).

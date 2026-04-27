@@ -2,13 +2,12 @@
 
 > [English README](README.md) · 中文
 
-一个多 LLM 的 agent 框架。配齐了 mem0 后端的长期记忆、llama-index 后端的 RAG、MCP 工具支持、反思机制。从一份 YAML 角色配置出发，三行代码起一个能用的 agent；不改代码就能切换 LLM 厂商；测试时干净地注入 mock。
+一个多 LLM 的 agent 框架。配齐了 mem0 后端的长期记忆、llama-index 后端的 RAG、MCP 工具支持、反思机制。从一份 YAML 角色配置出发，**两行代码**起一个能用的 agent；不改代码就能切换 LLM 厂商；测试时干净地注入 mock。
 
 ```python
-from DefenseAgent import AgentConfig, ReActAgent
+from DefenseAgent import create_agent
 
-config = AgentConfig(profile="agents/maya_rodriguez/profile.yaml")
-agent = ReActAgent(config)
+agent = create_agent("agents/maya_rodriguez/profile.yaml")
 result = await agent.run("我今天上午在干嘛？")
 print(result.final_answer)
 ```
@@ -29,6 +28,8 @@ print(result.final_answer)
 
 ## 安装
 
+项目已经用 `pyproject.toml` 打包。**本地开发用 editable 安装**:
+
 ```bash
 git clone <repo-url>
 cd DefenseAgent
@@ -37,10 +38,25 @@ python -m venv .venv3
 .venv3/Scripts/activate          # Windows
 # source .venv3/bin/activate     # macOS / Linux
 
-pip install -r requirements.txt
+pip install -e ".[all,dev]"      # 核心 + memory + rag + mcp + 测试
 ```
 
-完整依赖会拉进 `ms-agent`、`mem0ai`、`llama-index-core`、`qdrant-client`、（modelscope 链路上的）`torch` 等等，磁盘占用约 1 GB。把这些拆成 PyPI 可选 extras 在路线图里。
+### 按需选 extras
+
+仅核心(~100 MB)只装 LLM + profile + tools,跑 `SimpleAgent` 对话够用。memory / RAG / MCP 是可选 extras,**不需要的话就不会拖 torch / qdrant-client / llama-index 进来**:
+
+```bash
+pip install -e .                  # 仅核心 — LLM + profile + tools
+pip install -e ".[memory]"        # + mem0 + qdrant + fastembed
+pip install -e ".[rag]"           # + llama-index + pdfplumber + bs4
+pip install -e ".[mcp]"           # + MCP 客户端
+pip install -e ".[all]"           # 用户面全开
+pip install -e ".[all,dev]"       # 再加 pytest
+```
+
+> 全装(`[all]`)会拉进 `ms-agent`、`mem0ai`、`llama-index-core`、`qdrant-client`、(modelscope 链路上的)`torch` 等等,磁盘占用约 1 GB。
+
+发 PyPI(`pip install defense-agent`)在 API 稳定后做。
 
 ---
 
@@ -111,7 +127,46 @@ profile 目录里还能放：
 
 ## 快速开始
 
-### 角色扮演式对话
+### 一键工厂
+
+最简路径:传一份 profile YAML 路径,直接拿到能用的 agent。
+
+```python
+import asyncio
+from DefenseAgent import create_agent
+
+async def main():
+    agent = create_agent("agents/maya_rodriguez/profile.yaml")
+    result = await agent.run("现在下午 2 点，你今天上午都做了什么？")
+    print(result.final_answer)
+    await agent.close()
+
+asyncio.run(main())
+```
+
+`create_agent(...)` 接受三种输入,按调用现场最方便的写:
+
+```python
+from DefenseAgent import AgentConfig, create_agent
+
+# 1. profile 路径(str 或 pathlib.Path)
+agent = create_agent("agents/maya_rodriguez/profile.yaml")
+
+# 2. dict —— 转发给 AgentConfig(**dict)
+agent = create_agent({
+    "profile": "agents/maya_rodriguez/profile.yaml",
+    "tools": [calculator],
+    "use_rag": True,
+})
+
+# 3. 已经构好的 AgentConfig —— 需要完全控制时
+config = AgentConfig(profile="...", tools=[calculator], use_rag=True)
+agent = create_agent(config, strategy="plan_and_solve")
+```
+
+`strategy` 参数选 agent 类 —— `"react"`(默认)、`"simple"`、`"plan_and_solve"`。
+
+### 手动构造(完全控制)
 
 ```python
 import asyncio
@@ -129,7 +184,7 @@ asyncio.run(main())
 ### 纯代码构造（不依赖 .env）
 
 ```python
-from DefenseAgent import AgentConfig, ReActAgent
+from DefenseAgent import AgentConfig, create_agent
 from DefenseAgent.llm import LLM
 from DefenseAgent.memory import MemoryBackendConfig
 
@@ -142,27 +197,27 @@ backend = MemoryBackendConfig(
     embedding_api_key="sk-...", embedding_model="text-embedding-3-small",
     embedding_base_url="https://api.openai.com/v1", embedding_dims=1536,
 )
-config = AgentConfig(
+agent = create_agent(AgentConfig(
     profile="agents/maya_rodriguez/profile.yaml",
     llm=llm,
     memory_backend=backend,
     load_env=False,
-)
-agent = ReActAgent(config)
+))
 ```
 
 ### 注册自定义工具
 
 ```python
+from DefenseAgent import create_agent
+
 def calculator(expression: str) -> str:
     """Evaluate a math expression and return the numeric result."""
     return str(eval(expression))   # toy demo only
 
-config = AgentConfig(
-    profile="agents/maya_rodriguez/profile.yaml",
-    tools=[calculator],
-)
-agent = ReActAgent(config)
+agent = create_agent({
+    "profile": "agents/maya_rodriguez/profile.yaml",
+    "tools": [calculator],
+})
 ```
 
 函数名 + docstring + 类型签名会自动反推为 LLM 看到的 JSON-schema 工具规范。
@@ -211,10 +266,11 @@ DefenseAgent/
 │   ├── superpowers/specs/    # 设计文档（每模块一份）
 │   └── walkthroughs/         # 用户教程（每模块一份）
 ├── scripts/                  # 可直接运行的 demo（见下表）
-├── tests/                    # pytest 套件，397 / 398 通过
+├── tests/                    # pytest 套件，482 / 483 通过
 ├── .env.example
-├── pytest.ini
-└── requirements.txt
+├── pyproject.toml            # 打包 + pytest 配置
+├── LICENSE                   # MIT
+└── requirements.txt          # 老的固定依赖列表（extras 已迁到 pyproject.toml）
 ```
 
 ---
@@ -283,10 +339,9 @@ pytest tests/DefenseAgent/test_integration.py  # 跨模块集成
 
 SDK 化还要做的几件大事：
 
-- **`pyproject.toml`** —— 让项目能 `pip install`，带 `[memory]`、`[rag]`、`[dev]` 可选 extras
-- **顶层 `__init__.py` 改成 lazy 导入** —— 当前导入 agent 模块时会顺带把 torch（通过 modelscope）拖进来
-- **PEP 8 包名重命名** —— `DefenseAgent/` → `defense_agent/`
-- **`create_agent()` 一行起 agent 工厂** —— 把 `AgentConfig + Agent(config)` 收成一个调用
+- **发布到 PyPI** —— `pip install defense-agent`(目前是本地 `pip install -e .`)
+- **顶层 `__init__.py` 改成 lazy 导入** —— 让 `from DefenseAgent import AgentProfile` 不再顺带把 torch(经由 modelscope)拖进来
+- **PEP 8 包名重命名** —— `DefenseAgent/` → `defense_agent/`(import 名跟随 PEP 8;PyPI 分发名已经是 `defense-agent`)
 - **多 agent 通信** —— 进程内 `AgentBus` + `AgentSwarm`，让 agent 互相调用
 - **LLM facade 加重试 / 超时 / 日志** —— 把横切关注点从每个 adapter 上移到 facade
 
@@ -296,4 +351,4 @@ SDK 化还要做的几件大事：
 
 ## 协议
 
-待定 —— 发布前补一份 LICENSE 文件。
+[MIT](LICENSE)。
