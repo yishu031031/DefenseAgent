@@ -86,7 +86,14 @@ agent:
     score_threshold: 0.0
     use_huggingface: false
 
-  # --- Tools (skills + MCP servers + execution opt-in) -----------------------
+  # --- Tools (skills + MCP servers + Python entry points + exec opt-in) ------
+  # Tools come from three sources (any/all may be empty):
+  #   1. `skills:`  local SKILL.md directories (Anthropic-style Agent Skills)
+  #   2. `mcp:`     MCP servers (stdio | sse | websocket | streamable_http)
+  #   3. `python:`  Python entry points resolved via importlib at construction
+  # Python entries import arbitrary code at agent build time — only list
+  # entry points you trust. The signature + docstring of each function become
+  # the tool's input_schema + description automatically.
   tools:
     skills:
       - skills/tabular-report          # local skill directory (must contain SKILL.md)
@@ -106,6 +113,14 @@ agent:
     # Streamable-http and websocket are also supported (`transport: streamable_http`,
     # `transport: websocket`).
     mcp: []
+
+    # Python entry points — two accepted forms:
+    #   - module.dotted.path:function_name   # imported via importlib (must be on sys.path)
+    #   - relative/file.py:function_name     # loaded from a file under this profile's directory
+    # The function's type-annotated parameters become the tool's input schema;
+    # its docstring becomes the description.
+    python:
+      - python_tools/calc.py:calculator
 
     allow_skill_execution: false       # opt-in: each script in a skill becomes a callable Tool
     skill_execution_timeout: 300       # subprocess timeout (seconds)

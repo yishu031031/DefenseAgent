@@ -114,12 +114,13 @@ class MCPServerConfig(BaseModel):
 
 
 class ToolsConfig(BaseModel):
-    """Per-agent tool registrations: skill directories (paths) plus MCP server launch configs."""
+    """Per-agent tool registrations: skill directories (paths), MCP server launch configs, and Python entry-point strings (`module.path:function_name`) resolved via `importlib` at agent construction. The Python-entry path imports arbitrary code — only list entry points you trust."""
 
     model_config = _STRICT_MODEL_CONFIG
 
     skills: list[str] = Field(default_factory=list)
     mcp: list[MCPServerConfig] = Field(default_factory=list)
+    python: list[str] = Field(default_factory=list)
     allow_skill_execution: bool = False
     skill_execution_timeout: int = Field(ge=1, default=300)
 

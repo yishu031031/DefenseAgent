@@ -10,9 +10,10 @@ wins; otherwise we fall back to building from `profile` + .env. This lets SDK
 callers and tests construct components programmatically while preserving the
 zero-config `AgentConfig(profile="...yaml")` path for local development.
 """
+import importlib
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from DefenseAgent.agent.config import AgentConfig
 from DefenseAgent.config.profile import AgentProfile
@@ -21,6 +22,7 @@ from DefenseAgent.memory import ContextCompressor, Mem0Memory
 from DefenseAgent.ops import AgentLogger
 from DefenseAgent.reflection import Reflector
 from DefenseAgent.tools import ToolRegistry
+from DefenseAgent.tools.types import ToolRegistrationError
 
 
 @dataclass
@@ -79,6 +81,8 @@ def build_components_sync(config: AgentConfig) -> BuiltComponents:
             if profile.source_dir is not None:
                 for skill_ref in profile.tools.skills:
                     tools.add_skill((profile.source_dir / skill_ref).resolve())
+            for entry_point in profile.tools.python:
+                tools.tool(_resolve_python_entry_point(entry_point, profile.source_dir))
             for fn in config.tools:
                 tools.tool(fn)
 
@@ -150,6 +154,85 @@ async def async_finish_setup(
     return await LlamaIndexRAG.from_profile(
         profile, load_env=False, dotenv_path=config.dotenv_path,
     )
+
+
+def _resolve_python_entry_point(
+    entry_point: str,
+    base_dir: Path | None = None,
+) -> Callable[..., Any]:
+    """Resolve a `profile.tools.python` entry to a callable. Two accepted forms:
+
+      * `'module.dotted.path:function_name'` — resolved via `importlib.import_module`. Module must be on `sys.path`.
+      * `'relative/file.py:function_name'`  — resolved via `importlib.util.spec_from_file_location`, with the path resolved relative to `base_dir` (typically `profile.source_dir`). Best for tools bundled inside an agent's directory.
+
+    Raises `ToolRegistrationError` on malformed strings, import failures, missing attributes, and non-callable resolutions. Both forms execute the target module's top level — only list entry points you trust.
+    """
+    if not isinstance(entry_point, str) or ":" not in entry_point:
+        raise ToolRegistrationError(
+            f"profile.tools.python entry must be 'module.path:func' or "
+            f"'relative/file.py:func', got {entry_point!r}"
+        )
+    target, _, func_name = entry_point.rpartition(":")
+    if not target or not func_name:
+        raise ToolRegistrationError(
+            f"profile.tools.python entry must be 'module.path:func' or "
+            f"'relative/file.py:func', got {entry_point!r}"
+        )
+    if target.endswith(".py") or "/" in target or "\\" in target:
+        module = _load_module_from_file(target, base_dir, entry_point)
+    else:
+        try:
+            module = importlib.import_module(target)
+        except ImportError as e:
+            raise ToolRegistrationError(
+                f"could not import module {target!r} for tool {entry_point!r}: {e}"
+            ) from e
+    fn = getattr(module, func_name, None)
+    if fn is None:
+        raise ToolRegistrationError(
+            f"module {target!r} has no attribute {func_name!r}"
+        )
+    if not callable(fn):
+        raise ToolRegistrationError(
+            f"{entry_point!r} resolved to {type(fn).__name__}, not a callable"
+        )
+    return fn
+
+
+def _load_module_from_file(
+    rel_path: str,
+    base_dir: Path | None,
+    entry_point: str,
+) -> Any:
+    """Load a Python file as an anonymous module via `importlib.util.spec_from_file_location`. The path is resolved against `base_dir` when relative; absolute paths are used as-is. Raises ToolRegistrationError on missing files or import-time failures."""
+    import importlib.util
+
+    candidate = Path(rel_path)
+    if not candidate.is_absolute():
+        if base_dir is None:
+            raise ToolRegistrationError(
+                f"profile.tools.python entry {entry_point!r} uses a relative path "
+                f"but the profile has no source_dir to resolve it against"
+            )
+        candidate = (base_dir / candidate).resolve()
+    if not candidate.is_file():
+        raise ToolRegistrationError(
+            f"profile.tools.python file not found for {entry_point!r}: {candidate}"
+        )
+    module_name = f"_python_tool_{abs(hash(str(candidate)))}"
+    spec = importlib.util.spec_from_file_location(module_name, candidate)
+    if spec is None or spec.loader is None:
+        raise ToolRegistrationError(
+            f"could not build import spec for {entry_point!r} at {candidate}"
+        )
+    module = importlib.util.module_from_spec(spec)
+    try:
+        spec.loader.exec_module(module)
+    except Exception as e:
+        raise ToolRegistrationError(
+            f"failed to execute {entry_point!r} at {candidate}: {e}"
+        ) from e
+    return module
 
 
 def _build_logger(
