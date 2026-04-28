@@ -153,10 +153,10 @@ class AgentProfile(BaseModel):
 
     id: str = Field(min_length=1)
     name: str = Field(min_length=1)
-    age: int = Field(ge=0)
-    traits: str = Field(min_length=1)
-    backstory: str = Field(min_length=1)
-    initial_plan: str = Field(min_length=1)
+    age: int | None = Field(default=None, ge=0)
+    traits: str = ""
+    backstory: str = ""
+    initial_plan: str = ""
     cognitive: CognitiveConfig = Field(default_factory=CognitiveConfig)
     memory: MemoryConfig = Field(default_factory=MemoryConfig)
     rag: RAGConfig = Field(default_factory=RAGConfig)

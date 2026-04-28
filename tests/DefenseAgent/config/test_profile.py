@@ -305,22 +305,42 @@ def test_agent_profile_nested_overrides():
     assert profile.memory.search_limit == 2
 
 
-@pytest.mark.parametrize("missing_field", [
-    "id", "name", "age", "traits", "backstory", "initial_plan",
-])
-def test_agent_profile_requires_identity_fields(missing_field):
+@pytest.mark.parametrize("missing_field", ["id", "name"])
+def test_agent_profile_requires_id_and_name(missing_field):
+    """Only id and name are mandatory — id is the mem0 partition key, name fills the {name} placeholder."""
     data = _minimal_identity()
     del data[missing_field]
     with pytest.raises(ValidationError):
         AgentProfile(**data)
 
 
-@pytest.mark.parametrize("field", ["id", "name", "traits", "backstory", "initial_plan"])
-def test_agent_profile_rejects_empty_string_identity(field):
+@pytest.mark.parametrize("optional_field", ["age", "traits", "backstory", "initial_plan"])
+def test_agent_profile_optional_persona_fields_have_defaults(optional_field):
+    """age/traits/backstory/initial_plan are persona flavoring — when omitted they default to None or "" so a minimal profile only needs id+name."""
+    data = _minimal_identity()
+    del data[optional_field]
+    profile = AgentProfile(**data)  # must not raise
+    if optional_field == "age":
+        assert profile.age is None
+    else:
+        assert getattr(profile, optional_field) == ""
+
+
+@pytest.mark.parametrize("field", ["id", "name"])
+def test_agent_profile_rejects_empty_string_for_id_and_name(field):
+    """Required identity fields still reject empty/whitespace — the rest accept '' as the default."""
     data = _minimal_identity()
     data[field] = ""
     with pytest.raises(ValidationError):
         AgentProfile(**data)
+
+
+@pytest.mark.parametrize("field", ["traits", "backstory", "initial_plan"])
+def test_agent_profile_accepts_empty_persona_fields(field):
+    data = _minimal_identity()
+    data[field] = ""
+    profile = AgentProfile(**data)
+    assert getattr(profile, field) == ""
 
 
 def test_agent_profile_rejects_negative_age():
@@ -335,6 +355,17 @@ def test_agent_profile_allows_age_zero():
     data["age"] = 0
     profile = AgentProfile(**data)
     assert profile.age == 0
+
+
+def test_agent_profile_minimal_with_only_id_and_name():
+    """The whole point of making persona fields optional: spinning up an agent should need only id + name."""
+    profile = AgentProfile(id="bot", name="Helper")
+    assert profile.id == "bot"
+    assert profile.name == "Helper"
+    assert profile.age is None
+    assert profile.traits == ""
+    assert profile.backstory == ""
+    assert profile.initial_plan == ""
 
 
 def test_agent_profile_rejects_unknown_top_level_key():

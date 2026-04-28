@@ -287,29 +287,55 @@ config = AgentConfig(profile="…", llm=LLM(adapter=MyCustomAdapter()))
 
 The same injection pattern applies to every other component — see [Customization & dependency injection](#customization--dependency-injection) below.
 
-### Identity (required)
+### Identity
+
+Only **`id`** and **`name`** are required. The other four fields (`age`, `traits`, `backstory`, `initial_plan`) flavour the agent's persona and have safe defaults — leave them out for a minimal agent, fill them in for a richer one.
 
 ```yaml
-id: "agent_001"     # str, min_length=1. Used as agent_id in mem0 + as the log file name.
-name: "Nova Patel"  # str, min_length=1. The {name} placeholder.
-age: 27             # int ≥ 0.
-traits: "..."       # str, min_length=1. Free-form trait list.
-backstory: "..."    # str, min_length=1.
-initial_plan: "..." # str, min_length=1.
+# minimal — just id + name
+id: "bot"
+name: "Helper"
 ```
 
-The identity block is the only required block. Every field is non-empty after stripping. All six are exposed as `{id} {name} {age} {traits} {backstory} {initial_plan}` placeholders in the prompt template — see [`prompt:`](#prompt) below.
+```yaml
+# full — every persona field populated
+id: "agent_001"     # str, min_length=1. Required.
+name: "Nova Patel"  # str, min_length=1. Required.
+age: 27             # int ≥ 0 | null. Optional, default null.
+traits: "..."       # str. Optional, default "".
+backstory: "..."    # str. Optional, default "".
+initial_plan: "..." # str. Optional, default "".
+```
+
+All six are exposed as `{id} {name} {age} {traits} {backstory} {initial_plan}` placeholders in the prompt template — see [`prompt:`](#prompt) below. Optional fields render as empty strings when unset, so a template referencing `{traits}` won't crash on a minimal profile.
 
 #### What each field actually does
 
-| Field | Used for |
-|---|---|
-| `id` | (1) `agent_id` partition key in mem0 — records get scoped to this id. (2) Log file name: `<log_dir>/<id>.log`. (3) Available as `{id}` in the prompt template. **Choose a stable identifier you won't rename casually** — changing `id` orphans existing memory. |
-| `name` | The `{name}` placeholder. The auto-built identity prompt opens with `You are <name>, ...`. |
-| `age` | `{age}` placeholder. Useful for role-play personas; ignored if your custom prompt doesn't reference it. |
-| `traits` | `{traits}` placeholder. A free-form description of the agent's personality / tone / approach. Pulled into the auto-built prompt to flavour the agent's voice. |
-| `backstory` | `{backstory}` placeholder. Long-form narrative — career history, expertise areas, quirks. The most useful field for grounding the LLM in a specific persona. |
-| `initial_plan` | `{initial_plan}` placeholder. What the agent is currently working on; sets up the agent's "today" frame. The example profile uses this to seed the LLM with a task list it can reference unprompted. |
+| Field | Required? | Used for |
+|---|---|---|
+| `id` | **yes** | (1) `agent_id` partition key in mem0 — records get scoped to this id. (2) Log file name: `<log_dir>/<id>.log`. (3) Available as `{id}` in the prompt template. **Choose a stable identifier you won't rename casually** — changing `id` orphans existing memory. |
+| `name` | **yes** | The `{name}` placeholder. The auto-built identity prompt opens with `You are <name>, ...`. |
+| `age` | optional (default `null`) | `{age}` placeholder. Useful for role-play personas. When unset, the auto-built prompt opens with `You are <name>.` (no age clause), and `{age}` in user templates renders as `""`. |
+| `traits` | optional (default `""`) | `{traits}` placeholder. Free-form description of personality / tone / approach. When non-empty, the auto-built prompt adds a `Traits: ...` line. |
+| `backstory` | optional (default `""`) | `{backstory}` placeholder. Long-form narrative — career, expertise, quirks. The most useful field for grounding the LLM in a specific persona. |
+| `initial_plan` | optional (default `""`) | `{initial_plan}` placeholder. What the agent is currently working on; sets up the agent's "today" frame. |
+
+#### Auto-built prompt with optional fields omitted
+
+When fields are unset, the auto-built identity block skips their lines entirely instead of leaving blanks. With a minimal profile (`id: "bot"`, `name: "Helper"`), the agent's system prompt is just:
+
+```
+You are Helper.
+```
+
+Add `traits: "concise, technical"` and you get:
+
+```
+You are Helper.
+Traits: concise, technical
+```
+
+…and so on. No awkward "You are Helper, a -year-old. Traits: " sentences.
 
 #### Validation failure modes
 
@@ -317,10 +343,12 @@ The schema is strict — bad input fails at `AgentProfile.from_yaml()` with a `C
 
 | Input | Result |
 |---|---|
-| `id: ""` or `id: "   "` | `string_too_short` (whitespace stripped before length check) |
+| `id: ""` or `id: "   "` | `string_too_short` (id is required + non-empty after strip) |
+| `name: ""` | `string_too_short` (name is required + non-empty) |
+| missing `id` or missing `name` | `missing` validation error |
+| missing `age` / `traits` / `backstory` / `initial_plan` | accepted — defaults to `null` / `""` |
 | `age: -1` | `greater_than_equal` violation |
-| `age: 27.5` | `int_type` violation (must be integer) |
-| missing field | `missing` validation error — every identity field is required |
+| `age: 27.5` | `int_type` violation (must be integer or null) |
 | extra field | `extra_forbidden` — typos in field names fail loudly, no silent fallback |
 
 ### `cognitive:`

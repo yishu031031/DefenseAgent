@@ -287,29 +287,55 @@ config = AgentConfig(profile="…", llm=LLM(adapter=MyCustomAdapter()))
 
 同样的注入模式适用于其它每个组件 —— 见下面 [自定义与依赖注入](#自定义与依赖注入)。
 
-### 身份(必填)
+### 身份
+
+只有 **`id`** 和 **`name`** 是必填。其它四个(`age`、`traits`、`backstory`、`initial_plan`)只是 persona 调味,有合理默认值 —— 想要最简 agent 就留空,想要丰满 agent 就填上。
 
 ```yaml
-id: "agent_001"     # str, min_length=1。在 mem0 里作为 agent_id,也是日志文件名。
-name: "Nova Patel"  # str, min_length=1。{name} 占位符。
-age: 27             # int ≥ 0。
-traits: "..."       # str, min_length=1。自由格式的特征列表。
-backstory: "..."    # str, min_length=1。
-initial_plan: "..." # str, min_length=1。
+# 最简 —— 只有 id + name
+id: "bot"
+name: "Helper"
 ```
 
-身份块是唯一必填的块。每个字段去空白后非空。六个字段都作为 `{id} {name} {age} {traits} {backstory} {initial_plan}` 占位符出现在 prompt 模板中 —— 见下面的 [`prompt:`](#prompt)。
+```yaml
+# 完整 —— 每个 persona 字段都填
+id: "agent_001"     # str, min_length=1。必填。
+name: "Nova Patel"  # str, min_length=1。必填。
+age: 27             # int ≥ 0 | null。可选,默认 null。
+traits: "..."       # str。可选,默认 ""。
+backstory: "..."    # str。可选,默认 ""。
+initial_plan: "..." # str。可选,默认 ""。
+```
+
+六个字段都作为 `{id} {name} {age} {traits} {backstory} {initial_plan}` 占位符出现在 prompt 模板中 —— 见下面的 [`prompt:`](#prompt)。可选字段未设置时渲染为空字符串,所以最简 profile 配上引用 `{traits}` 的模板也不会崩。
 
 #### 各字段的实际作用
 
-| 字段 | 用于 |
-|---|---|
-| `id` | (1) mem0 的 `agent_id` 分区键 —— 记录会被限定到这个 id 之下。(2) 日志文件名:`<log_dir>/<id>.log`。(3) prompt 模板里的 `{id}` 占位符。**选一个稳定的标识符,别随便改** —— 改 `id` 会让现存的 memory 变成孤儿。 |
-| `name` | `{name}` 占位符。自动生成的身份 prompt 以 `You are <name>, ...` 开头。 |
-| `age` | `{age}` 占位符。角色扮演型 persona 用得着;自定义 prompt 不引用就忽略。 |
-| `traits` | `{traits}` 占位符。自由形式的性格 / 语气 / 风格描述。会被注入自动生成的 prompt,影响 agent 的"声音"。 |
-| `backstory` | `{backstory}` 占位符。长篇叙事 —— 履历、专业领域、个性特点。让 LLM 锚定在具体 persona 上,这个字段用处最大。 |
-| `initial_plan` | `{initial_plan}` 占位符。agent 当前在做什么;给 agent 设定"今天的"语境。example profile 用它给 LLM 喂一份 task 列表,可以无提示地引用。 |
+| 字段 | 必填? | 用于 |
+|---|---|---|
+| `id` | **是** | (1) mem0 的 `agent_id` 分区键 —— 记录会被限定到这个 id 之下。(2) 日志文件名:`<log_dir>/<id>.log`。(3) prompt 模板里的 `{id}` 占位符。**选一个稳定的标识符,别随便改** —— 改 `id` 会让现存的 memory 变成孤儿。 |
+| `name` | **是** | `{name}` 占位符。自动生成的身份 prompt 以 `You are <name>, ...` 开头。 |
+| `age` | 可选(默认 `null`) | `{age}` 占位符。角色扮演型 persona 用得着。未设置时,自动生成的 prompt 直接用 `You are <name>.`(没有 age 子句),用户模板里的 `{age}` 渲染为 `""`。 |
+| `traits` | 可选(默认 `""`) | `{traits}` 占位符。自由形式的性格 / 语气 / 风格描述。非空时,自动生成的 prompt 会加一行 `Traits: ...`。 |
+| `backstory` | 可选(默认 `""`) | `{backstory}` 占位符。长篇叙事 —— 履历、专业领域、个性特点。让 LLM 锚定在具体 persona 上,这个字段用处最大。 |
+| `initial_plan` | 可选(默认 `""`) | `{initial_plan}` 占位符。agent 当前在做什么;给 agent 设定"今天的"语境。 |
+
+#### 可选字段缺失时,自动生成的 prompt 是这样的
+
+字段未设置时,自动生成的身份块**整行跳过**,而不是留空白。最简 profile(`id: "bot"`、`name: "Helper"`),agent 的 system prompt 就是:
+
+```
+You are Helper.
+```
+
+加上 `traits: "concise, technical"`:
+
+```
+You are Helper.
+Traits: concise, technical
+```
+
+…以此类推。不会出现"You are Helper, a -year-old. Traits: "这种尴尬句子。
 
 #### 校验失败模式
 
@@ -317,10 +343,12 @@ schema 是严格的 —— 错误会在 `AgentProfile.from_yaml()` 阶段就抛 
 
 | 输入 | 结果 |
 |---|---|
-| `id: ""` 或 `id: "   "` | `string_too_short`(校验前会先 strip) |
+| `id: ""` 或 `id: "   "` | `string_too_short`(id 必填且 strip 后非空) |
+| `name: ""` | `string_too_short`(name 必填且非空) |
+| 缺 `id` 或缺 `name` | `missing` 校验错误 |
+| 缺 `age` / `traits` / `backstory` / `initial_plan` | 接受 —— 自动用 `null` / `""` |
 | `age: -1` | `greater_than_equal` 失败 |
-| `age: 27.5` | `int_type` 失败(必须整数) |
-| 缺字段 | `missing` —— 身份字段都是必填 |
+| `age: 27.5` | `int_type` 失败(必须整数或 null) |
 | 多字段 | `extra_forbidden` —— 字段名拼错会立即报错,不会静默 fallback |
 
 ### `cognitive:`

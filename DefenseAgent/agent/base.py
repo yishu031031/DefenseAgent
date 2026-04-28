@@ -297,14 +297,17 @@ class BaseAgent(ABC):
         return base
 
     def _default_identity_prompt(self) -> str:
-        """Auto-built identity block used when no `prompt.system` / `prompt.path` is configured."""
+        """Auto-built identity block used when no `prompt.system` / `prompt.path` is configured. Optional fields (age, traits, backstory, initial_plan) are skipped when empty/None so the resulting prompt has no awkward blank slots."""
         p = self.profile
-        return (
-            f"You are {p.name}, a {p.age}-year-old.\n"
-            f"Traits: {p.traits}\n"
-            f"Backstory: {p.backstory.strip()}\n"
-            f"Today's plan: {p.initial_plan.strip()}"
-        )
+        opener = f"You are {p.name}, a {p.age}-year-old." if p.age is not None else f"You are {p.name}."
+        parts = [opener]
+        if p.traits.strip():
+            parts.append(f"Traits: {p.traits.strip()}")
+        if p.backstory.strip():
+            parts.append(f"Backstory: {p.backstory.strip()}")
+        if p.initial_plan.strip():
+            parts.append(f"Today's plan: {p.initial_plan.strip()}")
+        return "\n".join(parts)
 
     def _resolve_prompt_template(self) -> str | None:
         """Pick the user's authored prompt — inline `system` first, then a file at `path` (relative to profile.source_dir). Returns None if neither is set."""
@@ -323,13 +326,13 @@ class BaseAgent(ABC):
         return None
 
     def _prompt_format_args(self) -> dict[str, Any]:
-        """Build the kwargs dict that fills `{placeholders}` inside a user-authored prompt template."""
+        """Build the kwargs dict that fills `{placeholders}` inside a user-authored prompt template. Optional fields render as empty strings when unset, so a template referencing `{age}` / `{traits}` / `{backstory}` / `{initial_plan}` does not crash on minimal profiles."""
         p = self.profile
         return {
             "id": p.id,
             "name": p.name,
-            "age": p.age,
-            "traits": p.traits,
+            "age": "" if p.age is None else p.age,
+            "traits": p.traits.strip(),
             "backstory": p.backstory.strip(),
             "initial_plan": p.initial_plan.strip(),
         }
