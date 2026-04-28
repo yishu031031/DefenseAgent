@@ -18,40 +18,118 @@ result = await agent.run("用一句话总结今天的计划。")
 - **单文件 agent 定义。** 身份、LLM 厂商、工具、memory、RAG、system prompt —— 全部写在一份严格校验的 YAML 里(`extra="forbid"`,未知字段会在加载时抛 `ConfigValidationError`)。
 - **按字段的配置 fallback。** 每个值都能在 profile 或 `.env` 中设置;profile 优先,`.env` 补缺。切换 LLM 厂商(`openai`、`anthropic`、`deepseek`、`qwen`、`google`、`vllm`)无需改代码。
 - **三种 agent 策略。** `SimpleAgent`(单轮)、`ReActAgent`(工具调用循环)、`PlanAndSolveAgent`(规划→执行→综合)。三者从同一份 `AgentConfig` 构造。
-- **三种工具来源,统一一个 registry。** 本地 skill 目录(Anthropic 风格的 `SKILL.md` 包)、MCP 服务器(stdio / SSE / WebSocket / streamable-http)、Python 函数(profile 中按文件路径或点分模块引用)。
+- **三种工具来源,统一一个 registry。** 本地 skill 目录(`SKILL.md` 包)、MCP 服务器(stdio / SSE / WebSocket / streamable-http)、Python 函数(profile 中按文件路径或点分模块引用)。
 - **持久化 memory + 内置工具。** mem0 + Qdrant 落盘存储;agent 自动暴露 `memory_recall` 工具给 LLM。`ContextCompressor` 在每次 LLM 调用前裁剪工作上下文。
 - **可选 RAG + 内置工具。** 把文档放进目录,设置 `rag.enabled: true`,获得 `rag_search` 工具。Embedder 凭证遵循同样的按字段 profile→env fallback。
-- **多模态输入。** `agent.run(task, images=[...])` 发送 OpenAI 风格的 content-block 消息。每张图片接受本地文件路径、`http(s)://` URL、或 `data:` URL。所有 OpenAI 兼容厂商都能直接消费;Anthropic 适配器收到 list 形态 content 时会抛出明确的 `LLMAdapterError`。
+- **多模态输入。** `agent.run(task, images=[...])` 发送 OpenAI 风格的 content-block 消息。每张图片接受本地文件路径、`http(s)://` URL、或 `data:` URL。所有 OpenAI 兼容厂商都能直接消费。
 - **可依赖注入。** LLM、memory、tools、reflector、compressor、logger 都能通过 `AgentConfig` 替换,方便测试和自定义接线。
-- **离线测试套件。** 跑 `pytest` 不需要网络或外部服务。
 
 ## 安装
 
 ```bash
-git clone https://github.com/yishu031031/DefenseAgent.git
-cd DefenseAgent
-conda create -n agent_lab python=3.12 -y
-conda activate agent_lab
-pip install -r requirements.txt
+pip install defense-agent
 ```
 
-## 配置
+按需勾选 extras —— 哪个模块要用,装哪个:
 
-在仓库根目录建立 `.env`,最少这几项:
+| Extra | 拉入的依赖 | 何时启用 |
+|---|---|---|
+| `defense-agent[memory]` | `mem0ai`、`fastembed` | 想用持久化 memory + `memory_recall` 工具 |
+| `defense-agent[rag]` | `llama-index-core`、`llama-index-embeddings-openai-like`、`llama-index-retrievers-bm25`、`pdfplumber`、`beautifulsoup4`、`Pillow` | 想用文档 RAG + `rag_search` 工具 |
+| `defense-agent[mcp]` | `mcp` | 想接 MCP 工具服务器 |
+| `defense-agent[all]` | memory + rag + mcp | 一次性全装 |
+| `defense-agent[dev]` | `pytest`、`pytest-asyncio` | 跑测试套件 |
+
+要求 Python ≥ 3.10。核心安装会拉入 `openai` + `anthropic` HTTP 客户端,以及 `ms-agent`(`ms-agent` 间接拉入 `torch`)。第一次安装大约 1 GB,留足磁盘和带宽。
+
+## 快速开始 —— 从零跑通一个 agent
+
+下面这段把"全新工程"的搭建从头走一遍。
+
+### 1. 建工程目录 + 虚拟环境
 
 ```bash
-AGENT_LAB_LLM_PROVIDER=deepseek
-DEEPSEEK_API_KEY=sk-…
-DEEPSEEK_MODEL=deepseek-chat
+mkdir myagent && cd myagent
+python -m venv .venv
+source .venv/bin/activate          # Windows 用 .venv\Scripts\activate
+pip install --upgrade pip
+```
+
+(用 conda 也行:`conda create -n myagent python=3.12 -y && conda activate myagent`)
+
+### 2. 安装
+
+```bash
+pip install 'defense-agent[all]'
+```
+
+如果不需要 RAG / MCP,可以只装小一点的 extras(例如 `defense-agent[memory]`)—— 见上面那张表。
+
+### 3. 把凭证写进 `.env`
+
+DefenseAgent 在构造时会调一次 `load_dotenv()`(运行环境已经有变量时可以传 `AgentConfig(load_env=False, ...)` 关掉)。在你将运行 Python 的目录创建 `.env`:
+
+```bash
+# myagent/.env
+AGENT_LAB_LLM_PROVIDER=deepseek                      # 选哪家适配器
+DEEPSEEK_API_KEY=sk-…                                # 你的 key
+DEEPSEEK_MODEL=deepseek-chat                         # 厂商支持的任意 chat 模型
 DEEPSEEK_BASE_URL=https://api.deepseek.com/v1
 
+# 仅在用 memory[memory_recall] 或 rag[rag_search] 时需要:
 EMBEDDING_API_KEY=sk-…
 EMBEDDING_BASE_URL=https://api.openai.com/v1
 EMBEDDING_MODEL=text-embedding-3-small
 EMBEDDING_DIMS=1536
-
-TAVILY_API_KEY=…    # 可选,scripts/react_tools_memory_demo.py 会使用
 ```
+
+完整的厂商列表和 embedding 组合见下面的 [配置](#配置)。
+
+### 4. 跑包内自带的 example agent
+
+wheel 里打包了一份完整的参考 profile。先原样跑一下:
+
+```python
+# myagent/run_example.py
+import asyncio
+from DefenseAgent.agent import AgentConfig, ReActAgent
+from DefenseAgent.examples import EXAMPLE_PROFILE_PATH
+
+async def main():
+    async with ReActAgent(AgentConfig(profile=EXAMPLE_PROFILE_PATH)) as agent:
+        result = await agent.run("用一句话总结今天的计划。")
+        print(result.final_answer)
+
+asyncio.run(main())
+```
+
+```bash
+python run_example.py
+```
+
+如果能打印出一句话,说明你的厂商凭证已经接通。
+
+### 5. 拷一份 profile 改成自己的
+
+把 example bundle 从包里拷出来,直接改:
+
+```bash
+python -c "
+from DefenseAgent.examples import EXAMPLE_AGENT_DIR
+import shutil; shutil.copytree(EXAMPLE_AGENT_DIR, './my_profile')
+"
+```
+
+会得到 `my_profile/` 目录,内含 `profile.yaml`、`prompts/`、`python_tools/`、`skills/`。改 `profile.yaml`(schema 见 [一步步搭一个 Agent](#一步步搭一个-agent)),然后让代码指向它:
+
+```python
+from pathlib import Path
+config = AgentConfig(profile=Path("./my_profile/profile.yaml"))
+```
+
+主流程就这些。剩下的章节都是参考资料。
+
+## 配置
 
 每个字段的解析顺序:profile YAML → 环境变量 → schema 默认值。仅含空白字符的值视为未设置。
 
@@ -80,32 +158,26 @@ Embedding 单独配 `EMBEDDING_*` 块。常见组合:
 
 `EMBEDDING_DIMS` **必须** 与模型实际输出向量维度一致,否则 Qdrant collection 会拒绝写入 —— 按模型文档列的向量长度填。
 
-## 快速开始
-
-```python
-import asyncio
-from DefenseAgent.agent import AgentConfig, ReActAgent
-from DefenseAgent.examples import EXAMPLE_PROFILE_PATH
-
-config = AgentConfig(profile=EXAMPLE_PROFILE_PATH)
-
-async def main():
-    async with ReActAgent(config) as agent:
-        result = await agent.run("用一句话总结今天的计划。")
-        print(result.final_answer)
-
-asyncio.run(main())
-```
-
-端到端 demo(calculator + Tavily web search + memory recall):
-
-```bash
-python scripts/react_tools_memory_demo.py
-```
-
 ## 一步步搭一个 Agent
 
-把 `DefenseAgent/examples/example_agent/`(在运行时也可以从 `DefenseAgent.examples` 拿到 `EXAMPLE_AGENT_DIR`)复制一份并改 `profile.yaml`。`agent:` 下每一块都可选,身份字段除外。所有字段都被 pydantic 严格校验(`extra="forbid"`)。
+一个 profile bundle 就是一个目录:
+
+```
+my_profile/
+├── profile.yaml          # 必需 —— schema 见下方
+├── prompts/              # 可选 —— system prompt 模板
+│   └── system.md
+├── python_tools/         # 可选 —— 本地 Python 工具入口
+│   └── calc.py
+├── skills/               # 可选 —— SKILL.md 风格的工具包
+│   └── tabular-report/
+├── memory/               # memory.is_retrieve=true 时运行时自动创建
+└── rag_corpus/           # rag.enabled=true 时被索引的文档目录
+```
+
+`AgentConfig(profile=Path("…/my_profile/profile.yaml"))` 会把 profile 里所有相对路径解析为相对 profile 文件所在目录,因此整个 bundle 自包含、可整体迁移。
+
+`agent:` 下每一块都可选,身份字段除外。所有字段都被 pydantic 严格校验(`extra="forbid"`)。
 
 ### `llm:`
 
@@ -119,6 +191,102 @@ llm:
 
 四个字段都是 `str | None`,各自独立 fallback 到 `.env`。仅含空白字符的值视为未设置 —— 半改一半的 YAML 不会盖掉正确的 env。
 
+#### 按字段的 fallback 实战
+
+每个字段的解析顺序,自上而下(第一个非空的胜出):
+
+1. profile YAML 里的 `llm.<field>:`
+2. 跨厂商 env 层 —— `LLM_API_KEY` / `LLM_MODEL_ID` / `LLM_BASE_URL`
+3. 单厂商 env 层 —— `<PROVIDER>_API_KEY` / `<PROVIDER>_MODEL` / `<PROVIDER>_BASE_URL`
+4. schema 默认值(适用时)
+
+推荐写法:profile 里只放 `llm: { provider: deepseek, model: deepseek-chat }`,其他都在 `.env` —— 模型选择属于 agent 身份,该写在 YAML;凭证属于运维问题,该放 `.env`。
+
+具体例子。给定:
+
+```yaml
+# profile.yaml
+llm:
+  provider: deepseek
+  model: deepseek-reasoner             # profile 显式指定
+```
+
+```bash
+# .env
+LLM_API_KEY=sk-shared                  # 跨厂商覆盖,优先级高于单厂商
+DEEPSEEK_API_KEY=sk-deepseek           # 单厂商,LLM_API_KEY 不存在时才用
+DEEPSEEK_BASE_URL=https://api.deepseek.com/v1
+DEEPSEEK_MODEL=deepseek-chat           # 被忽略 —— profile 里的 model 胜出
+```
+
+最终解析:
+- `provider` → `deepseek`(profile)
+- `model` → `deepseek-reasoner`(profile 胜过 `DEEPSEEK_MODEL`)
+- `base_url` → `https://api.deepseek.com/v1`(profile 留空 → fallback 到 `DEEPSEEK_BASE_URL`)
+- `api_key` → `sk-shared`(跨厂商 `LLM_API_KEY` 胜过 `DEEPSEEK_API_KEY`)
+
+#### 切换厂商无需改代码
+
+同一份 agent 代码,三种厂商,只改 `.env`:
+
+```bash
+# .env(版本 A —— DeepSeek)
+AGENT_LAB_LLM_PROVIDER=deepseek
+DEEPSEEK_API_KEY=sk-…
+DEEPSEEK_MODEL=deepseek-chat
+DEEPSEEK_BASE_URL=https://api.deepseek.com/v1
+```
+
+```bash
+# .env(版本 B —— DashScope/Qwen)
+AGENT_LAB_LLM_PROVIDER=qwen
+QWEN_API_KEY=sk-…
+QWEN_MODEL=qwen-plus
+QWEN_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
+```
+
+```bash
+# .env(版本 C —— 本地 vLLM)
+AGENT_LAB_LLM_PROVIDER=vllm
+VLLM_API_KEY=EMPTY                     # vLLM 默认不鉴权
+VLLM_MODEL=Qwen/Qwen2.5-72B-Instruct   # 跟服务里挂的对齐
+VLLM_BASE_URL=http://localhost:8000/v1
+```
+
+只要 profile 里 `llm.provider` / `llm.model` 留空(或者整个不写 `llm:` 块),agent 自动跟着 env 走。无需重启,无需改代码。
+
+#### 各厂商的特别说明
+
+| Provider | 注意点 |
+|---|---|
+| `openai` | `sk-…` 和 `sk-proj-…` 都支持。reasoning 模型(`o3-mini`、`o1`)更贵且请求形态略有不同 —— 适配器透明处理。 |
+| `anthropic` | 支持工具调用。多模态 list-shape `content` 会被拒绝并抛 `LLMAdapterError`(Anthropic 用另一种格式)。要支持 Claude 视觉,改 `DefenseAgent/llm/anthropic.py`。 |
+| `deepseek` | `deepseek-reasoner` 在 `reasoning_content` 里返回思考 token —— 适配器把它从 `Message.content` 里剥掉,下游代码不会看到 chain-of-thought。要看的话直接看原始响应。 |
+| `qwen` | 视觉模型是 `qwen-vl-max` / `qwen-vl-plus`。在 `agent.run()` 里传 `images=[...]` 时用这两个。 |
+| `google` | 走 Google 的 OpenAI 兼容端点 `generativelanguage.googleapis.com/v1beta/openai`。原生 Gemini SDK 没用。 |
+| `vllm` | `VLLM_API_KEY=EMPTY`(字面字符串 EMPTY)是惯例。`VLLM_MODEL` 必须跟服务上挂的模型名一致(看 vLLM 的 `--served-model-name`)。 |
+
+#### 程序化注入 LLM(测试、mock、自定义适配器)
+
+`AgentConfig` 接受预构造的 `LLM` 实例 —— 给了之后,**LLM 这一块的 env 构造路径完全跳过**。适用场景:
+
+```python
+from DefenseAgent.llm import LLM
+from DefenseAgent.llm.openai_compat import OpenAICompatibleAdapter
+
+# 1. 用 scripted/mocked LLM 做测试
+config = AgentConfig(profile="…", llm=ScriptedLLM(responses=[...]))
+
+# 2. 同进程内多 agent 用不同厂商
+config_a = AgentConfig(profile=p, llm=LLM(adapter=OpenAICompatibleAdapter(api_key="...", base_url="https://api.openai.com/v1", model="gpt-4o")))
+config_b = AgentConfig(profile=p, llm=LLM(adapter=AnthropicAdapter(api_key="...", model="claude-sonnet-4-6")))
+
+# 3. 自定义适配器(继承 LLMAdapter)
+config = AgentConfig(profile="…", llm=LLM(adapter=MyCustomAdapter()))
+```
+
+同样的注入模式适用于其它每个组件 —— 见下面 [自定义与依赖注入](#自定义与依赖注入)。
+
 ### 身份(必填)
 
 ```yaml
@@ -130,7 +298,30 @@ backstory: "..."    # str, min_length=1。
 initial_plan: "..." # str, min_length=1。
 ```
 
-每个字段去空白后非空。六个字段都作为 `{id} {name} {age} {traits} {backstory} {initial_plan}` 占位符出现在 prompt 模板中。
+身份块是唯一必填的块。每个字段去空白后非空。六个字段都作为 `{id} {name} {age} {traits} {backstory} {initial_plan}` 占位符出现在 prompt 模板中 —— 见下面的 [`prompt:`](#prompt)。
+
+#### 各字段的实际作用
+
+| 字段 | 用于 |
+|---|---|
+| `id` | (1) mem0 的 `agent_id` 分区键 —— 记录会被限定到这个 id 之下。(2) 日志文件名:`<log_dir>/<id>.log`。(3) prompt 模板里的 `{id}` 占位符。**选一个稳定的标识符,别随便改** —— 改 `id` 会让现存的 memory 变成孤儿。 |
+| `name` | `{name}` 占位符。自动生成的身份 prompt 以 `You are <name>, ...` 开头。 |
+| `age` | `{age}` 占位符。角色扮演型 persona 用得着;自定义 prompt 不引用就忽略。 |
+| `traits` | `{traits}` 占位符。自由形式的性格 / 语气 / 风格描述。会被注入自动生成的 prompt,影响 agent 的"声音"。 |
+| `backstory` | `{backstory}` 占位符。长篇叙事 —— 履历、专业领域、个性特点。让 LLM 锚定在具体 persona 上,这个字段用处最大。 |
+| `initial_plan` | `{initial_plan}` 占位符。agent 当前在做什么;给 agent 设定"今天的"语境。example profile 用它给 LLM 喂一份 task 列表,可以无提示地引用。 |
+
+#### 校验失败模式
+
+schema 是严格的 —— 错误会在 `AgentProfile.from_yaml()` 阶段就抛 `ConfigValidationError`,不会拖到 `agent.run()`:
+
+| 输入 | 结果 |
+|---|---|
+| `id: ""` 或 `id: "   "` | `string_too_short`(校验前会先 strip) |
+| `age: -1` | `greater_than_equal` 失败 |
+| `age: 27.5` | `int_type` 失败(必须整数) |
+| 缺字段 | `missing` —— 身份字段都是必填 |
+| 多字段 | `extra_forbidden` —— 字段名拼错会立即报错,不会静默 fallback |
 
 ### `cognitive:`
 
@@ -141,6 +332,53 @@ cognitive:
   importance_threshold: 7     # float ∈ [1, 10],默认 7。Reflection 中"重要"记忆的阈值。
   planning_horizon: "1 day"   # str, min_length=1,默认 "1 day"。自由格式;在 prompt 中暴露给 LLM。
 ```
+
+#### `max_steps_per_cycle` —— ReAct 循环预算
+
+`ReActAgent` 里一个"step"等于一次(tool-call → tool-result)往返。`max_steps_per_cycle: 10` 表示 LLM 最多有 10 次 tool-call 机会,然后循环就会被强制退出。强制退出时:
+
+```python
+result = await agent.run("multi-step task")
+# result.stopped_reason == "max_steps"   ← 循环触顶
+# result.final_answer                    ← LLM 最后给出的部分输出
+# result.steps                           ← 完整轨迹(10+ 条 —— call/result 交替)
+```
+
+可以单次覆盖 profile 设置:`await agent.run(task, max_steps=20)`。`SimpleAgent` 两个都忽略 —— 按定义就一次 LLM 调用。`PlanAndSolveAgent` 把 `max_steps` 解释为**计划长度上限**(不是每步的子步数上限,那个是 `AgentConfig.max_substeps_per_step`,默认 3)。
+
+按任务复杂度调:
+
+- 简单 Q&A 一次 tool call:`max_steps_per_cycle: 3` 够用
+- 多工具研究 ReAct:10–20
+- 长 horizon 迭代:谨慎放大 —— 每步都是要花钱的 LLM 调用
+
+#### `reflection_threshold` 和反思周期
+
+每次 `run()` 之后,如果 `reflect_after_run: true`(`AgentConfig` 默认值),agent 会调 `Reflector.maybe_reflect()`。这是个守卫:**当未反思记录数累计到 `reflection_threshold` 才触发反思周期**。低于阈值时是 no-op。
+
+触发后:
+
+1. `_get_unreflected_records()` 拉出 mem0 里所有 `memory_type != 'reflection'` 的记录
+2. `InsightSynthesizer.synthesize()` 让 LLM 提炼成 N 条(默认 3 条)bullet 形式的洞察
+3. 每条洞察以 `memory_type='reflection'`、importance 8.0 写回 mem0
+
+所以 `reflection_threshold: 5` 大概意思是"每 5 个 run/turn 触发一次反思"(看什么内容入 memory)。调小让自省更频繁;调大让反思更稀疏、更高信号。
+
+反思之后产生的记录后续 `memory_recall` 能看到 —— 让 agent 跨 run 长期建立对自己的理解。
+
+#### `importance_threshold`
+
+`ImportanceScorer` 用(LLM 给每条记录打 1–10 分)。反思过程中,低于此阈值的记录在送给 synthesizer 之前会被过滤掉 —— 让 LLM 聚焦实质内容,而不是闲聊。默认 7 偏保守;记录普遍偏低影响时调到 5。
+
+#### `planning_horizon`
+
+自由格式字符串 —— 出现在自动生成的身份 prompt 里,作为 agent 的工作时间窗口。默认 `"1 day"`。常见取值:
+
+- 短窗口运营 agent:`"this hour"`
+- 工程类 agent:`"this sprint"`
+- 紧 deadline:`"the next 30 minutes"`
+
+LLM 用它判断当前 run 的 scope:什么是要现在做的、什么该 defer。只有自定义 prompt 引用了自动生成的身份块(或自己手动引用)时才可见。
 
 ### `memory:`
 
@@ -159,7 +397,80 @@ memory:
   storage_path:                           # str | null。默认 <profile_dir>/memory/。
 ```
 
-mem0 + 本地 Qdrant。注册 `memory_recall` 工具。`ContextCompressor` 每次 LLM 调用前都会运行一次。
+需要 `defense-agent[memory]`(`mem0ai`、`fastembed`)。
+
+#### 落盘后实际是什么样
+
+第一次 `run()` 之后磁盘上会出现:
+
+```
+my_profile/
+└── memory/                              # = storage_path(默认 <profile_dir>/memory/)
+    ├── stream.db                        # SQLite —— 完整 block 流(每条 Message 原样保存)
+    ├── cache.json                       # ms-agent 用于 dedup 的 block hash
+    └── qdrant/                          # 本地 Qdrant —— 这些 block 的向量索引
+        └── collection/<agent_id>/
+```
+
+两份存储并存:SQLite 按插入顺序保存**完整对话历史**;Qdrant 保存**向量 embedding**,供 `memory_recall` 做语义检索。两份都按三元组 **`(user_id, agent_id, run_id)`** 分区 —— 同一个 agent 跨多个 session 时不会互相污染。
+
+#### `history_mode: add` vs `overwrite`
+
+- **`add`**(默认)—— 每条 Message 都追加。`agent.run("X")` 跑两次会留下两份独立的回答。简单、永远是新增。
+- **`overwrite`** —— 用 ms-agent 的 block-hash diff。完全相同的消息不会重复落盘;结构相似的运行会替换之前的 block。靠 hash 链支持回滚。当你想保留"每次 run 的当前最优状态"而不是完整流水账时,选这个。
+
+不论哪种模式,`ignore_roles:` 默认把 `tool` 和 `system` 消息排除在外 —— 工具结果体积大、冗余、能从原始 tool call 复现。如果只想留用户输入,加 `assistant` 进 `ignore_roles:`。
+
+#### `memory_type` 标签体系
+
+每条记录写入时会带一个 `memory_type` 标签(放在 metadata 里)。常见标签:
+
+| 标签 | 来源 | 含义 |
+|---|---|---|
+| (默认,无标签) | `agent.run()` 的对话轨迹 | 原始消息 |
+| `outcome` | `BaseAgent._save_outcome()` | `save_outcome: true` 时,成功 run 的最终回答 |
+| `failure` | 同上,但 `AgentError` 时 | 失败 run 的截断错误文本 |
+| `reflection` | `Reflector.maybe_reflect()` | LLM 在最近未反思记忆上提炼出的经验 |
+| `procedural` | mem0 原生形态 | mem0 的 procedural-memory 通道,我们不直接写入 |
+
+`memory_recall` 返回结果时会带类型前缀:`- [reflection] 工具失败时容易过度解释`。
+
+#### `memory_recall` —— 内置工具
+
+`is_retrieve: true` 时,LLM 会自动拿到 `memory_recall` 工具:
+
+```json
+{
+  "name": "memory_recall",
+  "input_schema": {
+    "query": "string",
+    "top_k":  "int (1..20,默认 5)"
+  }
+}
+```
+
+它在 Qdrant 上做相似度搜索,过滤当前 run 的 `(user_id, agent_id, run_id)`,最多返回 `top_k` 条记录(被 `search_limit:` 上限钳住)。是否调用由 LLM 自己决定 —— 不会自动注入到每一轮。
+
+#### `ContextCompressor` —— token 预算守卫
+
+跟 memory_recall 是两回事:这个负责保护**每次 LLM 调用**不超 context window。它在每次 LLM 调用**之前**运行,作用对象是工作消息列表(本轮要丢给 `chat()` 的内容)。
+
+四个数字这样配合:
+
+```
+工作消息总 token
+        │
+        │  当  total + reserved_buffer  >  context_limit
+        │       触发裁剪
+        ▼
+裁剪流程:
+   ── 保留最近的 prune_protect token 不动(近期消息最重要)
+   ── 把更老的内容压缩,使总量 ≥ prune_minimum
+   ── enable_summary=true 时,被压缩的老段会变成一条 LLM 生成的摘要 Message
+   ── enable_summary=false 时,直接丢弃,不替换
+```
+
+举例:`context_limit: 128000` + `reserved_buffer: 20000` 表示"工作消息超过 108K token 就开始裁剪"。`prune_protect: 40000` 表示"最近 40K token 永远不动"。`prune_minimum: 20000` 是地板 —— 哪怕内容已经能塞进 20K,也不再压。这四个数字要一起调;`context_limit` 设得超过模型实际窗口大小只会让 API 直接拒绝,没好处。
 
 ### `rag:`
 
@@ -181,64 +492,323 @@ rag:
   use_huggingface: false                  # bool,默认 false。ms-agent 的 HF 下载路径。
 ```
 
-`enabled: true` 时注册 `rag_search` 工具。Embedder 字段使用与 `llm:` 相同的按字段 profile→env fallback。
+需要 `defense-agent[rag]`(`llama-index-core`、`llama-index-embeddings-openai-like`、`llama-index-retrievers-bm25`、`pdfplumber`、`beautifulsoup4`、`Pillow`)。
+
+#### Bootstrap 流程 —— 第一次 run 时发生什么
+
+`rag.enabled: true` 状态下第一次 `agent.run()` 触发时:
+
+1. **发现文档** —— 枚举 `documents_dir`(相对 profile 目录,默认 `rag_corpus/`)下的每个文件
+2. **抽取结构化 chunk** —— `StructuredDocExtractor` 用注册的 extractor backend(`PyPdfExtractor`、`HtmlExtractor` …)逐文件处理。每个 backend 的 `supports(path)` 按扩展名/内容选用。普通 `.md` / `.txt` 走 LlamaIndex 的默认 loader
+3. **token 化 + 切块** —— 抽取出的每个 chunk 按 `chunk_size:` token 再切,相邻块按 `chunk_overlap:` 重叠。chunk 越小召回越细,索引条目越多;chunk 越大条目越少但越粗
+4. **embed + 建索引** —— 每个 chunk 过 embedder(`embedding:` 模型),向量落到 `storage_dir`(默认 `rag_index/`)下的持久化 FAISS 索引
+5. **持久化** —— 索引落盘,后续 run 完全跳过 1–4 步
+
+最终目录:
+
+```
+my_profile/
+├── profile.yaml
+├── rag_corpus/                            # = documents_dir
+│   ├── runbook.pdf
+│   ├── architecture.html
+│   └── notes.md
+└── rag_index/                             # = storage_dir
+    ├── default__vector_store.json         # FAISS 向量
+    ├── docstore.json                      # 原始 chunk 文本
+    └── _resources/                        # 抽取出的图片/表格(被 chunk 引用)
+```
+
+文档变了想重新建索引:删 `storage_dir` 后重 run。**没有增量索引** —— 是全有或全无。
+
+#### 文档格式 —— 支持哪些、怎么扩展
+
+| 来源 | Backend | 抽取的内容 |
+|---|---|---|
+| `.pdf` | `PyPdfExtractor`(基于 `pdfplumber`) | 文字、表格(渲染成 Markdown)、嵌入图像 |
+| `.html` | `HtmlExtractor`(基于 `beautifulsoup4`) | 按 section 切的正文、表格、`<img>` 引用 |
+| `.md` / `.txt` / `.rst` | LlamaIndex 默认 loader | 纯文本 chunk |
+| `.docx` / `.epub` / 其他 | LlamaIndex 默认 loader(尽力支持) | 纯文本 chunk |
+
+Extractor 是可插拔的。继承 `StructuredExtractor` `Protocol`(实现 `supports(source)` 和 `extract(source) -> list[StructuredChunk]`),注册到 extractor 上:
+
+```python
+from DefenseAgent.rag.extraction import StructuredDocExtractor
+
+class MyCsvExtractor:
+    def supports(self, source): return str(source).endswith(".csv")
+    def extract(self, source): return [...]   # list[StructuredChunk]
+
+extractor = StructuredDocExtractor(...)
+extractor.register(MyCsvExtractor(), prepend=True)   # 排在内置之前
+```
+
+resource renderer(table-to-Markdown、image-to-base64)是同样的形式 —— 见 `DefenseAgent/rag/renderer.py`。
+
+#### Embedding 选择 —— `openai` vs `huggingface`
+
+| `embedding_provider:` | 何时选 | 备注 |
+|---|---|---|
+| `openai`(默认) | 任何 OpenAI 兼容的 embedding 端点 —— OpenAI 自身、DashScope、ModelScope、vLLM、OpenRouter | 用四个 `embedding_*` 字段(或 `EMBEDDING_*` env 等价)。`openai-like` 适配器全包了。 |
+| `huggingface` | 离线、不能联网、想省钱 | 走 ms-agent 的 HF 下载路径,需要 `use_huggingface: true`。`embedding:` 填 Hugging Face model id(例如 `BAAI/bge-large-en-v1.5`)。第一次 run 慢一点(下载模型)。 |
+
+无论哪种 embedder,设置的 `EMBEDDING_DIMS:` 必须跟模型实际输出维度一致 —— `text-embedding-3-small` 是 1536,`text-embedding-3-large` 是 3072,Qwen3-Embedding-8B 是 4096。维度对不上 → FAISS 拒绝写入。
+
+#### `rag_search` 工具 —— LLM 看到的是什么
+
+`enabled: true` 时,registry 里会有:
+
+```json
+{
+  "name": "rag_search",
+  "description": "Vector search over the agent's RAG corpus...",
+  "input_schema": {
+    "query": "string",
+    "top_k": "int (默认 <profile.rag.top_k>)"
+  }
+}
+```
+
+LLM 自己决定何时调用;返回格式取决于 `retrieve_only:`:
+
+- **`retrieve_only: true`**(默认)—— 返回排序后的 top-k chunk,每条带分数前缀:
+  ```
+  [score=0.84] <chunk text 1>
+  [score=0.71] <chunk text 2>
+  ...
+  ```
+  便宜(不需要二次 LLM 调用),agent 拿到原料后可以自己取舍/过滤/重新组织。
+
+- **`retrieve_only: false`** —— 在召回的 chunk 上跑 LlamaIndex 自带的 QA 综合器:再来一次 LLM 调用合成一个最终回答字符串。更贵、灵活性低,但能一次性吐答案。
+
+`score_threshold:` 在返回之前做过滤 —— 低于阈值的 chunk 静默丢弃。比如设 0.4 抑制弱匹配;0.0(默认)把 top_k 召出来的全部返回。
 
 ### `tools:`
 
+三种工具来源,合并到同一个 `ToolRegistry`。LLM 看到的是一个扁平命名空间。先看整体形态,下面每节展开一种来源。
+
 ```yaml
 tools:
-  skills:                                 # list[str]。skill 目录路径,相对 profile 目录。
+  skills:                                 # list[str]。SKILL.md 风格的工具包(默认只读)。
     - skills/tabular-report
-  mcp:                                    # list[MCPServerConfig]。
-    - command: uvx                        # str | null。stdio server 必填。
-      args: [mcp-server-filesystem, /tmp] # list[str],默认 []。
-      env: { TOKEN: "" }                  # dict[str,str] | null。空值会从进程环境变量插值。
-      cwd:                                # str | null。可选工作目录。
-      include: [read_file]                # list[str]。白名单;与 exclude 互斥。
-      exclude: []                         # list[str]。黑名单。
-    - transport: sse                      # 'stdio' | 'sse' | 'websocket' | 'streamable_http'。
-      url: https://mcp.example.com/sse    # str | null。transport 不是 stdio 时必填。
-      headers: { Authorization: "..." }   # dict[str,str] | null。
-      timeout: 30                         # float ≥ 0 | null。连接超时(秒)。
-      sse_read_timeout: 300               # float ≥ 0 | null。SSE 长轮询超时。
+  mcp:                                    # list[MCPServerConfig]。外部 MCP 工具服务器。
+    - command: uvx
+      args: [mcp-server-filesystem, /tmp]
   python:                                 # list[str]。Python entry-point 字符串。
     - python_tools/calc.py:calculator
     - my_pkg.search:web_search
-  allow_skill_execution: false            # bool,默认 false。打开后 skill 中的脚本变可执行 Tool。
+  allow_skill_execution: false            # bool,默认 false。把 skill 里的脚本提升为可执行工具。
   skill_execution_timeout: 300            # int ≥ 1,默认 300。子进程超时(秒)。
 ```
 
-每个 MCP entry 必须只设置 `command:`(stdio)或 `url:`(网络)之一。每个 server 的 `include` 和 `exclude` 互斥。
+`run()` 启动时,registry 是三种来源的并集,加上自动注册的 `memory_recall` 和(启用时的)`rag_search`。所有工具的名字必须全局唯一 —— 重名在构造期就会立刻报错,不会等到调用时才崩。
 
-#### Python 工具文件放在哪里
+---
 
-`tools.python:` 接受两种形式:
+#### `tools.skills:` —— 本地 SKILL.md 工具包
 
-**1. 相对文件路径。** 路径相对当前 profile 目录解析,通过 `importlib.util.spec_from_file_location` 加载。无需配置 `sys.path`。
+一个 skill 就是一个目录,根目录有 `SKILL.md`,位置随便放(profile 里指它就行)。包内自带的参考 bundle [`DefenseAgent/examples/example_agent/skills/tabular-report/`](DefenseAgent/examples/example_agent/skills/tabular-report) 是标准形态:
 
 ```
-DefenseAgent/examples/example_agent/
-├── profile.yaml
-├── python_tools/
-│   └── calc.py            # def calculator(expression: str) -> str
-└── skills/
+skills/tabular-report/
+├── SKILL.md                   # 必填 —— frontmatter + 正文
+├── scripts/                   # 可选 —— 可执行脚本
+│   └── generate.py
+├── references/                # 可选 —— 长篇参考文档
+└── templates/                 # 可选 —— 辅助资源文件
+    └── header.md
 ```
 
-profile 中的写法:`python_tools/calc.py:calculator`。
+`SKILL.md` 顶部是 YAML frontmatter,后面是 LLM 会读到的 Markdown 正文:
 
-**2. 点分模块路径。** 模块必须能被运行中的 Python 解释器导入。通过 `importlib.import_module` 解析。
+```markdown
+---
+name: tabular-report
+description: 把行字典列表渲染成 GitHub 风格 Markdown 表格。
+author: kevin                  # 可选,会出现在 tool metadata 里
+tags: [reporting, table]       # 可选,会出现在 tool metadata 里
+---
+
+# Tabular Report
+
+需要用行字典生成 Markdown 表格时调这个 skill。
+
+## 怎么用
+
+1. 把每行数据收集成一个字典,所有字典 key 一致。
+2. 列顺序自己决定 —— skill 不会推断,要显式传列名。
+3. 用本工具的 `file=` 参数读取 `scripts/generate.py`,然后在自己的代码里调
+   `render_table(rows, columns)`。
+```
+
+agent 加载这个 skill 后,registry 里会出现**一个只读工具**,名字就叫 `tabular-report`:
+
+```json
+{
+  "name": "tabular-report",
+  "description": "把行字典列表渲染成 GitHub 风格 Markdown 表格。\n\nBundled files — scripts: generate.py; references: None; resources: header.md.",
+  "input_schema": {"file": "string (optional)"}
+}
+```
+
+description 由 frontmatter 的 `description:` 加上一行 bundled-file 清单组成(让 LLM 知道还能按名字读哪些文件,不需要瞎猜)。
+
+LLM 怎么用:
+
+| 调用 | 返回 |
+|---|---|
+| `tabular-report({})`(或 `file=""`) | SKILL.md 正文(剥掉 frontmatter)—— 也就是 LLM 拿到 prompt 风格的说明 |
+| `tabular-report({"file": "scripts/generate.py"})` | 这个文件的纯文本 |
+| `tabular-report({"file": "templates/header.md"})` | 这个文件的纯文本 |
+| `tabular-report({"file": "../../etc/passwd"})` | `SkillLoadError("path escapes skill directory ...")`—— 路径逃逸守卫 |
+
+skill 的元数据(skill_id、version、author、tags)挂在 `Tool.metadata` 字典上,后续过滤或审计可以用。
+
+##### 把脚本提升为可执行工具 —— `allow_skill_execution: true`
+
+默认下,skill 里的脚本是**可读但不可跑** —— LLM 拿到源码后只能在自己的推理里照着抄。把 `allow_skill_execution: true` 打开,**每个脚本会变成一个独立的可执行工具**,命名 `<skill>__<stem>`:
+
+```yaml
+tools:
+  skills:
+    - skills/tabular-report
+  allow_skill_execution: true
+  skill_execution_timeout: 300            # 子进程超时(秒)
+```
+
+这样 registry 里同时有 `tabular-report__generate`,输入 schema 是 `{args?: list[str], stdin?: string, timeout?: int}`。每次调用通过 `SkillContainer` 起一个全新的子进程跑(继承了 ms-agent 上游的危险模式守卫,挡 `rm -rf` 这种)。stdout、stderr 和退出码会被合成一个字符串返回给 LLM。
+
+可识别的脚本扩展名:`.py`、`.sh`、`.js`。`scripts/` 下的子目录里的脚本**不会**被递归收 —— 只有顶层脚本会被提升。
+
+---
+
+#### `tools.mcp:` —— 外部 MCP 服务器
+
+[Model Context Protocol](https://modelcontextprotocol.io) 服务器是独立进程,自己持有一份工具目录。DefenseAgent 的 `MCPClient` 继承自 ms-agent 的多服务器客户端,支持四种 transport:
+
+| `transport:` | 何时用 | 必填字段 |
+|---|---|---|
+| `stdio`(默认) | 本地启动的 server 进程(`uvx`、`npx`、`python` ……) | `command:` |
+| `sse` | 长连接 HTTP server-sent-events 端点 | `url:` |
+| `websocket` | WebSocket 服务器 | `url:` |
+| `streamable_http` | HTTP 流式端点 | `url:` |
+
+每条 entry **必须只设** `command:` 和 `url:` 中的一个,绝不能两个都给。所有 server 的连接是**懒建立** —— 在第一次 `agent.run()` 调用时才 spin up(连接是 async 的,只有真有工具调用才需要)。
+
+##### stdio 例子 —— 本地文件系统服务器
+
+```yaml
+tools:
+  mcp:
+    - command: uvx                        # PATH 上的可执行
+      args: [mcp-server-filesystem, /tmp/sandbox]
+      env:
+        DEBUG: "1"
+        GITHUB_TOKEN: ""                  # 空值 → connect() 时从进程环境变量取
+      cwd: /workspace                     # 可选工作目录
+      include: [read_file, list_dir]      # 白名单 —— 只暴露这几个工具名
+      # exclude: [delete_file]            # 备选:黑名单;与 include 互斥
+```
+
+行为:
+
+- 服务器声明的每个工具都会变成 registry 里的一个 `Tool`,**名字直接用服务器声明的工具名**(不加前缀)。来源服务器的名字记在 `tool.metadata["server"]` 里,方便溯源。
+- 每个 server 的 `include:` / `exclude:` 互斥。某个 server 工具太多时(比如 `mcp-server-filesystem` 有 ~10 个),用 `include: [read_file, list_dir]` 限到只读。
+- `env:` 里值为空字符串(例如 `GITHUB_TOKEN: ""`)的字段会在 connect 时从进程环境变量插值 —— 写 `""` 代替硬编码 key。
+
+##### 网络 transport 例子 —— SSE
+
+```yaml
+tools:
+  mcp:
+    - transport: sse
+      url: https://mcp.example.com/sse
+      headers:
+        Authorization: "Bearer ${MCP_API_TOKEN}"  # 不会自动插值,自己展开
+      timeout: 30                                  # 连接超时(秒)
+      sse_read_timeout: 300                        # 长轮询读取超时
+      include: [search]
+```
+
+header 里的值是**原样透传** —— DefenseAgent **不会**帮你展开 `${VAR}`。要做环境变量替换,要么在构造 `AgentConfig` 之前自己展开,要么把展开后的值写进 `.env` 里,YAML 中直接 inline。
+
+##### 多 server + 依赖
+
+```yaml
+tools:
+  mcp:
+    - command: uvx
+      args: [mcp-server-filesystem, /tmp]
+      include: [read_file]
+    - transport: sse
+      url: https://mcp.example.com/sse
+      headers: { Authorization: "Bearer secret" }
+```
+
+两个 server 的工具进同一个扁平 registry。跨 server 的工具名碰撞会在 registry 构造时直接报错 —— 接多个 server 时命名规范要自己拿捏。
+
+需要装 `defense-agent[mcp]`(官方 `mcp>=1.0` Python SDK)。
+
+---
+
+#### `tools.python:` —— 你自己的 Python 函数
+
+两种形态,都用 entry-point 字符串 `<module-or-file>:<function-name>`:
+
+**1. 相对文件路径**(不需要打成包)。路径相对 profile 目录解析,通过 `importlib.util.spec_from_file_location` 加载。运行的 Python 解释器不需要事先设 `sys.path`。
+
+```
+my_profile/
+├── profile.yaml              # tools.python: ["python_tools/calc.py:calculator"]
+└── python_tools/
+    └── calc.py               # def calculator(expression: str) -> str: ...
+```
+
+**2. 点分模块路径**(工具放在已安装的包里时用)。通过 `importlib.import_module` 解析。模块必须能被当前解释器 import —— `pip install -e .` 装好或者已经在 `sys.path` 上。
 
 ```
 my_pkg/
 ├── __init__.py
-└── search.py              # def web_search(query: str) -> str
+└── search.py                 # def web_search(query: str) -> str: ...
 ```
 
 profile 中的写法:`my_pkg.search:web_search`。
 
-两种形式下,函数的类型注解会成为 tool 的输入 schema,docstring 会成为 tool 的描述。
+##### 工具 schema 是自动派生的
 
-#### 在代码中注册(不写进 profile)
+两种形态下,**函数签名**变成工具的 input schema,**docstring** 变成 description。LLM 看不到你的代码本体,只看到这份合成出来的 metadata:
+
+```python
+def calculator(expression: str, precision: int = 4) -> str:
+    """Evaluate a Python arithmetic expression and return the result.
+
+    Supports +, -, *, /, **, parentheses, and the math module.
+    """
+    ...
+```
+
+会变成:
+
+```json
+{
+  "name": "calculator",
+  "description": "Evaluate a Python arithmetic expression...",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "expression": {"type": "string"},
+      "precision":  {"type": "integer", "default": 4}
+    },
+    "required": ["expression"]
+  }
+}
+```
+
+类型注解支持:`str`、`int`、`float`、`bool`、`list[T]`、`dict`、`Optional[T]`、原生 `Path`。任何无法干净转成 JSON-schema 的复杂类型会在加载时抛 `ToolRegistrationError` —— 命名/签名问题立刻暴露,不会拖到运行时。
+
+##### 在代码里直接注册(不写进 profile)
+
+不想写进 `profile.yaml` 的话,直接以代码注册:
 
 ```python
 def calculator(expression: str) -> str:
@@ -248,9 +818,7 @@ def calculator(expression: str) -> str:
 config = AgentConfig(profile="…", tools=[calculator])
 ```
 
-#### Skill 执行
-
-`allow_skill_execution: true` 时,skill 中每个脚本(`scripts/*.py`、`*.sh`、`*.js`)会被注册为单独的可执行 Tool,命名 `<skill_name>__<script_stem>`。基于子进程,通过 `SkillContainer` 执行,带从上游继承的危险模式守卫。
+`tools=` 接受 plain callable —— 自动派生规则一样。临时工具、测试用工具,或者依赖运行时状态(比如闭包持有数据库连接)的工具,适合走这条路径。
 
 ### `prompt:`
 
@@ -261,7 +829,92 @@ prompt:
   extra_instructions:             # str | null。追加在身份块之后。
 ```
 
-优先级:inline `system:` > `path:` > 自动生成的身份块。模板内可用占位符(通过 `str.format` 渲染):`{id} {name} {age} {traits} {backstory} {initial_plan}`。模板格式坏掉时回退到自动生成的身份块,而不是让 run 崩掉。
+System prompt 是 LLM 在每次调用时看到的 `system=` 参数 —— agent 的"帽子",跟 user-turn 任务内容是分开的。
+
+#### 三条解析路径
+
+agent 按这个顺序解析 system prompt,**第一个非空的胜出**:
+
+1. **inline `system:` 字段** —— YAML 里直接写一段字面字符串。短的、一次性的 prompt 适用,不值得专门开个文件。
+2. **`path:` 指向文件** —— 相对 profile 目录解析。任何非平凡的 prompt 都建议这种方式 —— 版本控制、跨 agent 复用、长占位符模板,都更顺手。
+3. **自动生成的身份块** —— 上面两个都空(或渲染失败)时,agent 用身份字段拼一段 fallback prompt。
+
+不论走哪条路径,`extra_instructions:` 都会以空行分隔追加到末尾。同一份基础 prompt 上想叠 agent-instance 维度的微调而不 fork 文件,用这个。
+
+#### 自动生成的身份块长什么样
+
+没有 `system:` 也没有 `path:` 时,agent 会生成大概这样的内容:
+
+```
+You are Nova Patel, a 27-year-old field engineer turned AI researcher.
+
+Personality: methodical, asks clarifying questions, prefers concrete examples
+over abstractions.
+
+Background: Started in industrial automation, pivoted to applied LLM research.
+Currently embedded with the platform team.
+
+Today's plan: shipping the v3 ingestion pipeline by Friday.
+
+Your planning horizon for this run: 1 day.
+```
+
+…由 `name`/`age`/`traits`(一行)、`backstory`(段落)、`initial_plan`(段落)、`cognitive.planning_horizon`(末行)组装。这是个最简骨架 —— 任何生产环境的 agent 都建议自己写模板。
+
+#### `prompts/system.md` 具体例子
+
+```markdown
+You are {name}, a {age}-year-old {traits} field engineer turned AI researcher.
+
+# Background
+
+{backstory}
+
+# Today
+
+{initial_plan}
+
+# How to behave
+
+- Speak in first person, in natural English. Be concise — sentences, not paragraphs.
+- When the answer needs information from earlier conversations or stored facts,
+  call `memory_recall` instead of guessing. Don't tell the user you're doing this;
+  just do it.
+- When the answer needs work done in the world (file lookups, web searches,
+  computations), call the appropriate tool.
+- If a tool fails or returns nothing useful, acknowledge it briefly and move on.
+- Stay in character. You're an engineer, not a chatbot.
+```
+
+六个占位符(`{id} {name} {age} {traits} {backstory} {initial_plan}`)通过 Python 的 `str.format` 渲染。其它的 —— `{plan}`、`{date}`、`{user}` —— 都会 `KeyError`。
+
+#### `extra_instructions:` 追加位置
+
+最终 prompt 形态:
+
+```
+<resolved-prompt-from-path-or-inline-or-auto-built>
+<空行>
+<extra_instructions>
+```
+
+适用场景:
+- 在共享基础 prompt 上加输出格式约束(`Always respond as JSON.`)
+- 不动模板,只针对某个 agent 实例收紧语气
+- 按环境覆盖("生产环境永远不要暴露 stack trace。")
+
+`AgentConfig.extra_instructions`(Python 端覆盖)优先级高于 `profile.prompt.extra_instructions`,两者都设时取前者 —— 适合做运行时分层。
+
+#### 失败模式与 fallback 行为
+
+| 问题 | 行为 |
+|---|---|
+| `path:` 指向不存在的文件 | profile load 阶段就抛 `ConfigValidationError` |
+| 模板引用了未知占位符(例如 `{date}`) | 渲染报错 → fallback 到自动身份块,run 继续。日志里有 warning。 |
+| `system:` 和 `path:` 都设了 | `ConfigValidationError` —— 选其中一个,不能两个都给 |
+| 两个都空 + 身份字段不完整 | 自动生成块只有在身份本身校验失败时才出错(那一步在更早就已经失败了) |
+
+fallback 到自动身份块的行为是**故意的**:模板里一个 typo 不该让生产环境的 agent 崩掉。warning 会进日志,可以不重启就修。
 
 ## 内置工具
 
@@ -349,6 +1002,109 @@ result = await agent.run(
 
 `ReActAgent` 只在最初的 user turn 携带图片,后续的 tool 结果消息保持纯文本。`PlanAndSolveAgent` 在 Phase 1 的规划消息和 Phase 2 的每一步执行消息都携带相同的图片,这样每个引用原始任务的阶段都能再看图。
 
+## 自定义与依赖注入
+
+agent 依赖的每个组件都可以通过 `AgentConfig` 替换。给定预构造组件时,**该组件的 env 构造路径完全跳过**,系统其它部分(其它组件 + 它们的 env fallback)不受影响。这是主要的扩展面 —— 不 fork 框架就能继承、mock、替换任意一层。
+
+### 子系统开关
+
+```python
+config = AgentConfig(
+    profile="…",
+    use_tools=True,         # 默认。False → 不构造 tool registry,LLM 看不到任何工具。
+    use_memory=True,        # 默认。False → 跳过 mem0 setup,不注册 memory_recall 工具。
+    use_reflection=True,    # 默认。False → 不构造 Reflector,run 后不走反思。
+    use_rag=None,           # 默认 → 跟随 profile.rag.enabled。True/False 显式覆盖。
+    use_compressor=True,    # 默认。False → ContextCompressor 永不运行(自己管上下文)。
+    use_logger=True,        # 默认。False → 不构造 AgentLogger,事件被压制。
+)
+```
+
+`use_memory` 关掉时,依赖项自动失效:`save_outcome`、`save_trajectory`、`reflect_after_run` 全变 no-op(没 memory 后端 → 没地方写)。不需要自己手动翻。
+
+### 可替换组件
+
+```python
+config = AgentConfig(
+    profile="…",
+
+    # 任意一项给定后,自动构造的版本被替换掉。
+    llm=my_llm,                       # LLM 实例(任意适配器)
+    memory=my_mem0_memory,            # Mem0Memory 或鸭子类型兼容
+    tool_registry=my_registry,        # 已经填好工具的 ToolRegistry
+    logger=my_logger,                 # AgentLogger
+    reflector=my_reflector,           # Reflector
+    compressor=my_compressor,         # ContextCompressor
+    rag=my_rag,                       # LlamaIndexRAG(或任何带 .search(query, top_k) 的对象)
+
+    # mem0 后端控制 —— 仅在 memory=None 且 use_memory=True 时使用。
+    # 让你以编程方式配置 mem0 *内部* 的 LLM/embedder(跟 agent 自己的 chat LLM 是
+    # 两回事),不需要碰 .env。
+    memory_backend=MemoryBackendConfig(
+        llm_provider="openai",
+        llm_model="gpt-4o-mini",
+        embedder_provider="openai",
+        embedder_model="text-embedding-3-small",
+    ),
+)
+```
+
+### 内联工具注入(不写进 profile)
+
+除了 `tools.python:` 里写的,直接传 plain callable:
+
+```python
+def my_search(query: str) -> str:
+    """Web search via my custom backend."""
+    ...
+
+config = AgentConfig(profile="…", tools=[my_search])
+```
+
+这些跟 `tools.python:` 的条目一起注册到同一个 `ToolRegistry`。自动派生规则一样:签名 → schema、docstring → description。
+
+### 常见模式
+
+**同进程多 LLM。** 两个 config,共享除 `llm` 之外的一切:
+
+```python
+shared = dict(profile="…", memory=shared_memory, tool_registry=shared_registry)
+config_fast  = AgentConfig(**shared, llm=cheap_llm)
+config_smart = AgentConfig(**shared, llm=expensive_llm)
+```
+
+**用 scripted response 做测试。** 一个 `ScriptedLLM`,按顺序返回预设的 `LLMResponse` —— 整个测试套件就是这么做的。
+
+```python
+config = AgentConfig(profile="…", llm=ScriptedLLM([resp(content="ok")]))
+```
+
+**自定义 memory 后端。** 继承 `Mem0Memory`,override `search_records()`:
+
+```python
+class CachedMemory(Mem0Memory):
+    def search_records(self, query, **kw):
+        if query in self._cache:
+            return self._cache[query]
+        result = super().search_records(query, **kw)
+        self._cache[query] = result
+        return result
+
+config = AgentConfig(profile="…", memory=CachedMemory(profile=profile))
+```
+
+**插一个不同的 RAG 后端。** 任何带 `search(query: str, top_k: int) -> list[dict]` 方法的对象都行:
+
+```python
+class ElasticRAG:
+    async def search(self, query, top_k=5):
+        # 查 Elasticsearch 而不是 FAISS...
+
+config = AgentConfig(profile="…", rag=ElasticRAG(), use_rag=True)
+```
+
+agent 的 `rag_search` 工具走你这个对象,跟走 `LlamaIndexRAG` 完全一样。
+
 ## 架构
 
 ```
@@ -378,27 +1134,39 @@ run(task) ──► AgentResult { final_answer, steps[], usage }
 | `DefenseAgent/rag/` | `LlamaIndexRAG`、profile 桥接 |
 | `DefenseAgent/reflection/` | `Reflector` |
 | `DefenseAgent/agent/` | `BaseAgent`、`SimpleAgent`、`ReActAgent`、`PlanAndSolveAgent`、`AgentConfig`、`_builder` |
+| `DefenseAgent/examples/` | `EXAMPLE_AGENT_DIR` + 包内自带的参考 profile |
 
 memory、MCP、skill、RAG 模块均继承自 [ms-agent](https://github.com/modelscope/ms-agent) 的上游类。
 
-## Demo
+## 本地开发
+
+如果你想改 DefenseAgent 自身(不是只用它),clone 仓库,以可编辑模式装上 dev extras:
 
 ```bash
-python scripts/react_tools_memory_demo.py     # ReAct + calculator + Tavily + memory recall
-python scripts/profile_chat_demo.py           # 用 example_agent profile 跑一次单轮对话
-python scripts/tools_demo.py                  # 演示 skill 工具的三层
-python scripts/memory_demo.py                 # mem0 add / search / dump
+git clone https://github.com/yishu031031/DefenseAgent.git
+cd DefenseAgent
+python -m venv .venv && source .venv/bin/activate
+pip install -e '.[all,dev]'
 ```
 
-## 测试
+跑测试套件(离线,不需要网络或外部服务):
 
 ```bash
-pytest                       # 全套,离线运行
+pytest                       # 全套
 pytest -k tools              # 只跑某个模块
 pytest -x --tb=short         # 第一次失败就停
 ```
 
 531 个测试,3 个 skip。
+
+仓库里 `scripts/` 目录下还有几个独立的 demo 脚本(不在 wheel 里):
+
+```bash
+python scripts/react_tools_memory_demo.py     # ReAct + calculator + Tavily + memory recall
+python scripts/profile_chat_demo.py           # 用 example profile 跑一次单轮对话
+python scripts/tools_demo.py                  # 演示 skill 工具的三层
+python scripts/memory_demo.py                 # mem0 add / search / dump
+```
 
 ## License
 
