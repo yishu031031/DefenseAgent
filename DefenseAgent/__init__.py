@@ -30,7 +30,7 @@ from DefenseAgent.agent import (
 )
 from DefenseAgent.config import AgentProfile
 
-__version__ = "0.1.2"
+__version__ = "0.1.3"
 
 __all__ = [
     "create_agent",
