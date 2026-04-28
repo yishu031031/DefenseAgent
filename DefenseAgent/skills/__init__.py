@@ -15,7 +15,14 @@ from DefenseAgent.skills.container import (
     ExecutorType,
     SkillContainer,
 )
-from DefenseAgent.skills.loader import SkillLoader, load_skills
+from DefenseAgent.skills.loader import (
+    SkillLoader,
+    builtin_skills_path,
+    default_project_skills_path,
+    default_user_skills_path,
+    discover_skill_dirs,
+    load_skills,
+)
 from DefenseAgent.tools.types import SkillLoadError
 
 __all__ = [
@@ -34,4 +41,8 @@ __all__ = [
     "ExecutionSpec",
     "ExecutionStatus",
     "ExecutorType",
+    "builtin_skills_path",
+    "default_user_skills_path",
+    "default_project_skills_path",
+    "discover_skill_dirs",
 ]

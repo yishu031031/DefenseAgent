@@ -1,3 +1,4 @@
+import logging
 import re
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -9,7 +10,11 @@ from DefenseAgent.tools.types import SkillLoadError, Tool, ToolHandler
 
 
 if TYPE_CHECKING:
+    from DefenseAgent.config.profile import EvolutionConfig
     from DefenseAgent.skills.container import SkillContainer
+
+
+_LOG = logging.getLogger(__name__)
 
 
 _FRONTMATTER_RE = re.compile(r"^---\s*\n.*?\n---\s*\n", re.DOTALL)
@@ -65,6 +70,28 @@ class SkillLoader(MsSkillLoader):
     def all_skills(self) -> dict[str, SkillSchema]:
         """Return a shallow copy of the loaded-skills mapping (keys are `{skill_id}@{version}`). ms-agent calls this `get_all_skills()`; we keep both spellings for ergonomics."""
         return self.get_all_skills()
+
+    def load_dirs_tolerant(self, dirs: "list[Path | str]") -> list[SkillSchema]:
+        """Load each layer in `dirs` independently — one bad skill or missing directory never blocks the rest. For every entry: skip silently when the path does not exist, otherwise call `load_skills(path)` inside its own try/except and log warnings on failure. Returns the SkillSchemas added by this call (i.e., not what was already in the registry). Same-name overrides follow ms-agent's existing rules in the underlying registry (later-loaded wins)."""
+        added: list[SkillSchema] = []
+        before = set(self.get_all_skills().keys())
+        for raw in dirs:
+            path = Path(raw)
+            if not path.exists():
+                continue
+            try:
+                self.load_skills(str(path))
+            except Exception as e:
+                _LOG.warning(
+                    "skill layer %s failed to load (%s); other skills still available",
+                    path, e,
+                )
+                continue
+        after = self.get_all_skills()
+        for key, schema in after.items():
+            if key not in before:
+                added.append(schema)
+        return added
 
 
 _EXECUTOR_FOR_SUFFIX: dict[str, str] = {
@@ -248,3 +275,53 @@ def _strip_frontmatter(content: str) -> str:
 def load_skills(skills: Any) -> dict[str, SkillSchema]:
     """One-shot convenience matching ms-agent's `loader.py:230` module-level helper. Builds a fresh `SkillLoader`, calls `load_skills(skills)`, and returns the `{skill_id}@{version}` → SkillSchema mapping. The argument follows ms-agent's signature: a single path, a list of paths, a list of `SkillSchema` objects, or a ModelScope hub repo id (`'org/repo'`)."""
     return SkillLoader().load_skills(skills)
+
+
+def builtin_skills_path() -> Path:
+    """Resolve the directory of the framework's bundled methodology skills. Anchored on this module's `__file__` so it works whether DefenseAgent is installed as a wheel or run from a checkout."""
+    return Path(__file__).resolve().parent / "builtin"
+
+
+def default_user_skills_path() -> Path:
+    """User-level skills root, mirroring Claude Code's `~/.claude/skills/`. Cross-project: useful for personal methodology skills the user wants available everywhere."""
+    return Path.home() / ".defense-agent" / "skills"
+
+
+def default_project_skills_path() -> Path:
+    """Project-level skills root, mirroring Claude Code's `.claude/skills/`. Resolved against the current working directory; this is where `skill-creator` writes by default."""
+    return Path.cwd() / "skills"
+
+
+def discover_skill_dirs(
+    evolution: "EvolutionConfig | None" = None,
+) -> list[Path]:
+    """Return the ordered list of skill source directories to feed `SkillLoader.load_dirs_tolerant`. Order is builtin → user → project so that later layers override earlier on name collisions. `evolution.use_builtin=False` removes the builtin layer; an empty string in `user_skills_dir` / `project_skills_dir` removes that layer; `None` means "use the default path". Non-existent paths are kept in the returned list — the tolerant loader handles their absence."""
+    dirs: list[Path] = []
+    use_builtin = True
+    user_override: str | None = None
+    project_override: str | None = None
+    if evolution is not None:
+        use_builtin = evolution.use_builtin
+        user_override = evolution.user_skills_dir
+        project_override = evolution.project_skills_dir
+    if use_builtin:
+        dirs.append(builtin_skills_path())
+    user_path = _resolve_layer_path(user_override, default_user_skills_path)
+    if user_path is not None:
+        dirs.append(user_path)
+    project_path = _resolve_layer_path(project_override, default_project_skills_path)
+    if project_path is not None:
+        dirs.append(project_path)
+    return dirs
+
+
+def _resolve_layer_path(
+    override: str | None,
+    default_factory: "Any",
+) -> Path | None:
+    """Map an `EvolutionConfig` override field to a concrete Path. `None` → use the default; `""` → suppress the layer; any other string → use it as-is (relative paths are resolved against cwd)."""
+    if override is None:
+        return default_factory()
+    if override == "":
+        return None
+    return Path(override).expanduser()

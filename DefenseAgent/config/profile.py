@@ -159,6 +159,17 @@ class LLMConfig(BaseModel):
     base_url: str | None = None
 
 
+class EvolutionConfig(BaseModel):
+    """Self-evolution skill auto-discovery (Claude Code-style). Three layers feed `SkillLoader` at agent start: framework `builtin/` shipped in the wheel, a cross-project `user_skills_dir` (default `~/.defense-agent/skills`), and a per-project `project_skills_dir` (default `./skills`). Layers load builtin → user → project; later layers override earlier on name collision. Missing layers are silent. Set `use_builtin=False` to opt out of the framework methodology pack; pass `user_skills_dir=""`/`project_skills_dir=""` to suppress that layer explicitly."""
+
+    model_config = _STRICT_MODEL_CONFIG
+
+    use_builtin: bool = True
+    user_skills_dir: str | None = None
+    project_skills_dir: str | None = None
+    default_scope: str = Field(default="project", pattern=r"^(project|user)$")
+
+
 class AgentProfile(BaseModel):
     """Module 2's unified facade: the validated agent identity plus nested cognitive, memory, and tools configs."""
 
@@ -182,6 +193,7 @@ class AgentProfile(BaseModel):
     tools: ToolsConfig = Field(default_factory=ToolsConfig)
     prompt: PromptConfig = Field(default_factory=PromptConfig)
     llm: LLMConfig = Field(default_factory=LLMConfig)
+    evolution: EvolutionConfig = Field(default_factory=EvolutionConfig)
 
     _source_path: Path | None = PrivateAttr(default=None)
 

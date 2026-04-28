@@ -81,6 +81,7 @@ def build_components_sync(config: AgentConfig) -> BuiltComponents:
             if profile.source_dir is not None:
                 for skill_ref in profile.tools.skills:
                     tools.add_skill((profile.source_dir / skill_ref).resolve())
+            _autoload_evolution_skills(tools, profile)
             for entry_point in profile.tools.python:
                 tools.tool(_resolve_python_entry_point(entry_point, profile.source_dir))
             for fn in config.tools:
@@ -233,6 +234,37 @@ def _load_module_from_file(
             f"failed to execute {entry_point!r} at {candidate}: {e}"
         ) from e
     return module
+
+
+def _autoload_evolution_skills(
+    tools: ToolRegistry,
+    profile: AgentProfile,
+) -> None:
+    """Discover and register the framework-builtin / user / project skill layers configured by `profile.evolution`. Layer order is builtin → user → project; per-skill load failures are logged and skipped (never abort agent startup); missing layer directories are silent. Tool name collisions inside `ToolRegistry.add_skill` are also skipped — earlier-registered tools win, so a project-level skill of the same name as the loader's first hit is shadowed by the registry's idempotency rule (the loader-level "later wins" override is achieved here by registering the project layer last via the layer ordering, since the registry skips dupes silently)."""
+    from DefenseAgent.skills import (
+        SkillLoader,
+        discover_skill_dirs,
+    )
+
+    dirs = discover_skill_dirs(profile.evolution)
+    if not dirs:
+        return
+    # Reverse so that project (last in `dirs`) is registered first and wins
+    # the registry's idempotent name-collision check, matching M3 precedence:
+    # project > user > builtin.
+    for skill_dir in reversed(dirs):
+        if not skill_dir.exists():
+            continue
+        loader = SkillLoader()
+        try:
+            loader.load_dirs_tolerant([skill_dir])
+        except Exception:  # noqa: BLE001 — never block agent startup
+            continue
+        layer_tools = loader.to_tools()
+        for tool in layer_tools:
+            if tool.name in tools._tools:
+                continue
+            tools.register(tool)
 
 
 def _build_logger(
