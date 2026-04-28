@@ -42,8 +42,11 @@ dependencies = [
 
 [project.optional-dependencies]
 # mem0 + qdrant-based persistent memory. Heavy: pulls torch via modelscope.
+# `mem0ai[nlp]` adds spaCy so mem0's NLP-based dedup/extraction stops printing
+# "Failed to load spaCy lemma model" on every startup. `fastembed` enables
+# BM25 keyword search inside mem0 so the matching warning also goes away.
 memory = [
-    "mem0ai>=2.0.0",
+    "mem0ai[nlp]>=2.0.0",
     "fastembed>=0.4.0",
 ]
 

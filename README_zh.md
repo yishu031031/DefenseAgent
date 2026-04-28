@@ -72,7 +72,7 @@ config = AgentConfig(profile=..., use_memory=False)   # 裸装必须加这行
 
 | Extra | 拉入的依赖 | 何时需要 |
 |---|---|---|
-| `defense-agent[memory]` | `mem0ai`、`fastembed` | 默认配置可用 + 持久化 memory + `memory_recall` 工具 |
+| `defense-agent[memory]` | `mem0ai[nlp]`、`fastembed`(`spacy` 间接拉入) | 默认配置可用 + 持久化 memory + `memory_recall` 工具。启动安静(没有 spaCy/fastembed warning)。 |
 | `defense-agent[rag]` | `llama-index-core`、`llama-index-embeddings-openai-like`、`llama-index-retrievers-bm25`、`pdfplumber`、`beautifulsoup4`、`Pillow` | profile 里 `rag.enabled: true` + `rag_search` 工具 |
 | `defense-agent[mcp]` | `mcp` | 连 MCP 工具服务器(`tools.mcp:` 条目) |
 | `defense-agent[all]` | memory + rag + mcp | 一次性全装,所有子系统都能用 |
@@ -80,9 +80,11 @@ config = AgentConfig(profile=..., use_memory=False)   # 裸装必须加这行
 
 要求 Python ≥ 3.10。核心安装会拉入 `openai` + `anthropic` HTTP 客户端,以及 `ms-agent`(`ms-agent` 间接拉入 `torch`)。第一次安装大约 1 GB,留足磁盘和带宽。
 
-### 提前提醒:第一次跑会有上游 warning
+### 关于启动 log
 
-memory 子系统启动时,`mem0`/`ms-agent` 可能打出 `Failed to load spaCy lemma model` 或 `fastembed not installed — BM25 keyword search disabled` 之类的消息。这些是 `mem0ai` 自己的功能探测提示 —— **可以忽略**,agent 没有它们也照常跑。想消掉的话装上那些可选包(`pip install mem0ai[nlp] fastembed`)。
+从 0.1.4 起,`defense-agent[memory]` 已经把 `mem0ai[nlp]` 和 `fastembed` 都带上,memory 初始化默认就是安静的。
+
+如果你(或下游用户)绕过 extras 直接 `pip install mem0ai`,可能看到 `Failed to load spaCy lemma model` / `fastembed not installed — BM25 keyword search disabled` 之类的消息。这些是 mem0 的可选特性探测 —— **可以忽略**,agent 照常工作。装回 `defense-agent[memory]`(或者 `pip install 'mem0ai[nlp]' fastembed`)就清干净。
 
 ## 快速开始 —— 从零跑通一个 agent
 

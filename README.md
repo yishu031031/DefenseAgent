@@ -72,7 +72,7 @@ The full table of extras:
 
 | Extra | Pulls in | Required for |
 |---|---|---|
-| `defense-agent[memory]` | `mem0ai`, `fastembed` | Default config to work; persistent memory + the `memory_recall` tool |
+| `defense-agent[memory]` | `mem0ai[nlp]`, `fastembed` (`spacy` pulled in transitively) | Default config to work; persistent memory + the `memory_recall` tool. Clean startup (no spaCy/fastembed warnings). |
 | `defense-agent[rag]` | `llama-index-core`, `llama-index-embeddings-openai-like`, `llama-index-retrievers-bm25`, `pdfplumber`, `beautifulsoup4`, `Pillow` | `rag.enabled: true` profiles + the `rag_search` tool |
 | `defense-agent[mcp]` | `mcp` | Connecting to MCP tool servers (entries under `tools.mcp:`) |
 | `defense-agent[all]` | memory + rag + mcp | One-shot — every subsystem usable with no further installs |
@@ -80,9 +80,11 @@ The full table of extras:
 
 Requires Python ≥ 3.10. The core install pulls in `openai` + `anthropic` HTTP clients and `ms-agent` (which transitively brings in `torch` for its tooling pipeline). Plan for ~1 GB on the first install.
 
-### Heads-up: upstream warnings on first run
+### About startup messages
 
-When memory subsystem starts, `mem0`/`ms-agent` may print warnings like `Failed to load spaCy lemma model` or `fastembed not installed — BM25 keyword search disabled`. These are upstream feature-detection messages from `mem0ai` itself — they're **safe to ignore**, and the agent runs without them. If you want them silenced, install the extra optional pieces those packages mention (`pip install mem0ai[nlp] fastembed`).
+Since 0.1.4, `defense-agent[memory]` already pulls `mem0ai[nlp]` and `fastembed`, so memory init is silent out of the box.
+
+If you (or a downstream user) ever installed `mem0ai` directly with bare `pip install mem0ai` and see messages like `Failed to load spaCy lemma model` or `fastembed not installed — BM25 keyword search disabled`, those are mem0's optional-feature probes — **safe to ignore**, the agent runs fine without them. Install via `defense-agent[memory]` (or just `pip install 'mem0ai[nlp]' fastembed`) to clean them up.
 
 ## Quickstart — from zero to a running agent
 
