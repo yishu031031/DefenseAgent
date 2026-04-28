@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "defense-agent"
-version = "0.1.1"
+version = "0.1.2"
 description = "Multi-LLM agent framework with mem0-backed memory, llama-index RAG, MCP tool support, and reflection."
 readme = "README.md"
 license = { file = "LICENSE" }
