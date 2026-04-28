@@ -18,10 +18,7 @@ from DefenseAgent.llm import LLM, Message                            # ← front
 from DefenseAgent.llm import LLMError
 
 
-DEFAULT_PROFILE_PATH = (
-    Path(__file__).resolve().parent.parent
-    / "agents" / "example_agent" / "profile.yaml"
-)
+from DefenseAgent.examples import EXAMPLE_PROFILE_PATH as DEFAULT_PROFILE_PATH
 
 # The user-facing question the agent will answer in character.
 USER_QUESTION = "It's 2 PM. What have you been doing this morning, and what's next?"

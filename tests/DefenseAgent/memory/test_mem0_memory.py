@@ -14,10 +14,7 @@ from DefenseAgent.config import AgentProfile
 from DefenseAgent.llm.types import Message, ToolCall
 
 
-_EXAMPLE_PROFILE = (
-    Path(__file__).resolve().parent.parent.parent.parent
-    / "agents" / "example_agent" / "profile.yaml"
-)
+from DefenseAgent.examples import EXAMPLE_PROFILE_PATH as _EXAMPLE_PROFILE
 
 
 def _set_env(monkeypatch: pytest.MonkeyPatch) -> None:

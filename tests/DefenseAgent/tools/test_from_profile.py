@@ -23,10 +23,7 @@ from DefenseAgent.config import AgentProfile
 from DefenseAgent.tools import ToolRegistry, ToolRegistrationError
 
 
-_EXAMPLE_PROFILE = (
-    Path(__file__).resolve().parent.parent.parent.parent
-    / "agents" / "example_agent" / "profile.yaml"
-)
+from DefenseAgent.examples import EXAMPLE_PROFILE_PATH as _EXAMPLE_PROFILE
 
 
 def _write_skill_dir(path: Path, *, name: str, description: str) -> Path:

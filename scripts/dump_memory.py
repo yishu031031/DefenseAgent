@@ -1,10 +1,9 @@
 """Pretty-print an agent's memory stream in chronological order (no embeddings).
 
 Usage:
-    python scripts/dump_memory.py                                  # defaults to the example agent's stream
-    python scripts/dump_memory.py agents/alice_chen/memory/stream.db
-    python scripts/dump_memory.py agents/example_agent/memory/stream.db --kind observation
-    python scripts/dump_memory.py agents/example_agent/memory/stream.db --limit 20
+    python scripts/dump_memory.py                                                              # defaults to the example agent's stream
+    python scripts/dump_memory.py DefenseAgent/examples/example_agent/memory/stream.db --kind observation
+    python scripts/dump_memory.py DefenseAgent/examples/example_agent/memory/stream.db --limit 20
 
 Reads the SQLite file directly — no LLM calls, no embedding decode. Each record
 prints as one block:
@@ -24,10 +23,9 @@ import textwrap
 from pathlib import Path
 
 
-DEFAULT_DB = (
-    Path(__file__).resolve().parent.parent
-    / "agents" / "example_agent" / "memory" / "stream.db"
-)
+from DefenseAgent.examples import EXAMPLE_AGENT_DIR
+
+DEFAULT_DB = EXAMPLE_AGENT_DIR / "memory" / "stream.db"
 
 
 _SELECT_SQL_TEMPLATE = """\

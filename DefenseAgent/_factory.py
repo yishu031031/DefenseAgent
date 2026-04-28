@@ -48,7 +48,8 @@ def create_agent(
     Examples
     --------
     >>> from DefenseAgent import create_agent
-    >>> agent = create_agent("agents/example_agent/profile.yaml")
+    >>> from DefenseAgent.examples import EXAMPLE_PROFILE_PATH
+    >>> agent = create_agent(EXAMPLE_PROFILE_PATH)
     >>> agent = create_agent({"profile": "...", "use_rag": True})
     >>> agent = create_agent(AgentConfig(profile="..."), strategy="plan_and_solve")
     """

@@ -17,10 +17,7 @@ from tests.DefenseAgent.agent._support import (
 )
 
 
-_EXAMPLE_PROFILE = (
-    Path(__file__).resolve().parent.parent.parent.parent
-    / "agents" / "example_agent" / "profile.yaml"
-)
+from DefenseAgent.examples import EXAMPLE_PROFILE_PATH as _EXAMPLE_PROFILE
 
 
 def _set_env_for_real_construction(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -64,8 +64,8 @@ from DefenseAgent import AgentConfig, ReActAgent
 from DefenseAgent.config import AgentProfile
 
 
+from DefenseAgent.examples import EXAMPLE_PROFILE_PATH as EXAMPLE_PROFILE
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-EXAMPLE_PROFILE = PROJECT_ROOT / "agents" / "example_agent" / "profile.yaml"
 
 
 # ---------- Tool 1: safe arithmetic calculator ----------

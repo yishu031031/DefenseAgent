@@ -1,6 +1,6 @@
 """A safe arithmetic calculator for the example agent.
 
-Wired into the agent via `agents/example_agent/profile.yaml`:
+Wired into the agent via `DefenseAgent/examples/example_agent/profile.yaml`:
 
     tools:
       python:

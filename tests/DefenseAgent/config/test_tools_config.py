@@ -212,10 +212,10 @@ def test_in_memory_profile_has_no_source_path() -> None:
 
 
 def test_shipped_example_profile_parses_with_tools() -> None:
-    """The real agents/example_agent/profile.yaml must load with the new schema."""
-    root = Path(__file__).resolve().parent.parent.parent.parent
-    path = root / "agents" / "example_agent" / "profile.yaml"
-    profile = AgentProfile.from_yaml(path)
-    assert profile.source_dir == path.resolve().parent
+    """The shipped DefenseAgent/examples/example_agent/profile.yaml must load with the new schema."""
+    from DefenseAgent.examples import EXAMPLE_PROFILE_PATH
+
+    profile = AgentProfile.from_yaml(EXAMPLE_PROFILE_PATH)
+    assert profile.source_dir == EXAMPLE_PROFILE_PATH.resolve().parent
     assert profile.tools.skills == ["skills/tabular-report"]
     assert profile.tools.mcp == []

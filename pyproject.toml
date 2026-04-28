@@ -88,7 +88,6 @@ packages = ["DefenseAgent"]
 [tool.hatch.build.targets.sdist]
 include = [
     "DefenseAgent",
-    "agents/example_agent",
     "README.md",
     "README_zh.md",
     "LICENSE",

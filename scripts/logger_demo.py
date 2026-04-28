@@ -26,10 +26,7 @@ from DefenseAgent.llm import LLMError, LLMProviderError
 from DefenseAgent.ops import AgentLogger                             # ← front-door class
 
 
-DEFAULT_PROFILE_PATH = (
-    Path(__file__).resolve().parent.parent
-    / "agents" / "example_agent" / "profile.yaml"
-)
+from DefenseAgent.examples import EXAMPLE_PROFILE_PATH as DEFAULT_PROFILE_PATH
 
 
 # -------------------- demo sections --------------------

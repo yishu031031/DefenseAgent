@@ -3,15 +3,17 @@
 The recommended top-level entry points:
 
     from DefenseAgent import create_agent
+    from DefenseAgent.examples import EXAMPLE_PROFILE_PATH
 
-    agent = create_agent("agents/example_agent/profile.yaml")
+    agent = create_agent(EXAMPLE_PROFILE_PATH)
     result = await agent.run("Hello")
 
 Or, when you need full control over the config:
 
     from DefenseAgent import AgentConfig, ReActAgent
+    from DefenseAgent.examples import EXAMPLE_PROFILE_PATH
 
-    config = AgentConfig(profile="agents/example_agent/profile.yaml", tools=[my_func])
+    config = AgentConfig(profile=EXAMPLE_PROFILE_PATH, tools=[my_func])
     agent = ReActAgent(config)
 """
 from DefenseAgent._factory import create_agent

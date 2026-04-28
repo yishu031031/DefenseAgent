@@ -6,8 +6,9 @@
 
 ```python
 from DefenseAgent.agent import AgentConfig, ReActAgent
+from DefenseAgent.examples import EXAMPLE_PROFILE_PATH
 
-config = AgentConfig(profile="agents/example_agent/profile.yaml")
+config = AgentConfig(profile=EXAMPLE_PROFILE_PATH)
 agent  = ReActAgent(config)
 result = await agent.run("用一句话总结今天的计划。")
 ```
@@ -84,8 +85,9 @@ Embedding 单独配 `EMBEDDING_*` 块。常见组合:
 ```python
 import asyncio
 from DefenseAgent.agent import AgentConfig, ReActAgent
+from DefenseAgent.examples import EXAMPLE_PROFILE_PATH
 
-config = AgentConfig(profile="agents/example_agent/profile.yaml")
+config = AgentConfig(profile=EXAMPLE_PROFILE_PATH)
 
 async def main():
     async with ReActAgent(config) as agent:
@@ -103,7 +105,7 @@ python scripts/react_tools_memory_demo.py
 
 ## 一步步搭一个 Agent
 
-把 `agents/example_agent/` 复制一份并改 `profile.yaml`。`agent:` 下每一块都可选,身份字段除外。所有字段都被 pydantic 严格校验(`extra="forbid"`)。
+把 `DefenseAgent/examples/example_agent/`(在运行时也可以从 `DefenseAgent.examples` 拿到 `EXAMPLE_AGENT_DIR`)复制一份并改 `profile.yaml`。`agent:` 下每一块都可选,身份字段除外。所有字段都被 pydantic 严格校验(`extra="forbid"`)。
 
 ### `llm:`
 
@@ -215,7 +217,7 @@ tools:
 **1. 相对文件路径。** 路径相对当前 profile 目录解析,通过 `importlib.util.spec_from_file_location` 加载。无需配置 `sys.path`。
 
 ```
-agents/example_agent/
+DefenseAgent/examples/example_agent/
 ├── profile.yaml
 ├── python_tools/
 │   └── calc.py            # def calculator(expression: str) -> str

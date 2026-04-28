@@ -33,10 +33,7 @@ from DefenseAgent.memory import (
 from DefenseAgent.ops import AgentLogger                              # ← front-door class
 
 
-DEFAULT_PROFILE_PATH = (
-    Path(__file__).resolve().parent.parent
-    / "agents" / "example_agent" / "profile.yaml"
-)
+from DefenseAgent.examples import EXAMPLE_PROFILE_PATH as DEFAULT_PROFILE_PATH
 
 _NOW = datetime(2026, 4, 22, 18, 0, tzinfo=timezone.utc)  # reference "now"
 

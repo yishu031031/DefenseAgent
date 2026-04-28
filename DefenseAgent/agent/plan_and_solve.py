@@ -49,7 +49,7 @@ class PlanAndSolveAgent(BaseAgent):
 
     Constructed from an `AgentConfig`:
 
-        config = AgentConfig(profile="agents/example_agent/profile.yaml")
+        config = AgentConfig(profile="DefenseAgent/examples/example_agent/profile.yaml")
         agent = PlanAndSolveAgent(config)
 
     Inject pre-built components (mocks, custom adapters) via the `llm`,

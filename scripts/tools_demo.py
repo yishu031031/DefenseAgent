@@ -32,9 +32,9 @@ from DefenseAgent.llm.types import ToolCall
 from DefenseAgent.tools import ToolRegistry
 
 
+from DefenseAgent.examples import EXAMPLE_AGENT_DIR, EXAMPLE_PROFILE_PATH as EXAMPLE_PROFILE
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-AGENTS_DIR = PROJECT_ROOT / "agents"
-EXAMPLE_PROFILE = AGENTS_DIR / "example_agent" / "profile.yaml"
+AGENTS_DIR = EXAMPLE_AGENT_DIR.parent
 
 
 def _banner(title: str) -> None:
@@ -47,7 +47,7 @@ async def main() -> None:
     """Load the example profile, build its tool registry from it, and walk every layer."""
     _banner("Agent bundle layout")
     print(f"Repo root:    {PROJECT_ROOT}")
-    print(f"agents/:      {AGENTS_DIR}")
+    print(f"examples/:    {AGENTS_DIR}")
     print(f"Agents:       {sorted(p.name for p in AGENTS_DIR.iterdir() if p.is_dir())}")
     print(f"Example profile: {EXAMPLE_PROFILE}")
     example_dir = EXAMPLE_PROFILE.parent

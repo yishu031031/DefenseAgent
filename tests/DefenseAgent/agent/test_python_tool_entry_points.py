@@ -122,15 +122,12 @@ def test_file_path_entry_surfaces_module_load_errors(tmp_path: Path):
 
 
 def test_file_path_entry_works_via_builder_against_example_agent(tmp_path: Path):
-    """End-to-end: the shipped `agents/example_agent` profile lists `python_tools/calc.py:calculator`. The builder must register it as a tool named `calculator`."""
+    """End-to-end: the shipped example bundle lists `python_tools/calc.py:calculator`. The builder must register it as a tool named `calculator`."""
     from DefenseAgent.agent._builder import build_components_sync
     from DefenseAgent.agent.config import AgentConfig
+    from DefenseAgent.examples import EXAMPLE_PROFILE_PATH
 
-    profile_path = (
-        Path(__file__).resolve().parent.parent.parent.parent
-        / "agents" / "example_agent" / "profile.yaml"
-    )
-    profile = AgentProfile.from_yaml(profile_path)
+    profile = AgentProfile.from_yaml(EXAMPLE_PROFILE_PATH)
     built = build_components_sync(
         AgentConfig(
             profile=profile, use_memory=False, use_reflection=False,

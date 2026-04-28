@@ -2,4 +2,4 @@ include LICENSE
 include README.md
 include README_zh.md
 include pyproject.toml
-recursive-include agents/example_agent *
+recursive-include DefenseAgent/examples *

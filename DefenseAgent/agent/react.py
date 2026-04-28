@@ -45,7 +45,7 @@ class ReActAgent(BaseAgent):
 
     Constructed from an `AgentConfig`:
 
-        config = AgentConfig(profile="agents/example_agent/profile.yaml")
+        config = AgentConfig(profile="DefenseAgent/examples/example_agent/profile.yaml")
         agent = ReActAgent(config)
 
     The agent builds its own LLM, memory, tools, reflector, compressor and

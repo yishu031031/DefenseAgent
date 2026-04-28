@@ -79,10 +79,7 @@ def test_create_agent_from_path_loads_yaml(monkeypatch: pytest.MonkeyPatch, tmp_
     monkeypatch.setenv("EMBEDDING_MODEL", "text-embedding-3-small")
     monkeypatch.setenv("EMBEDDING_DIMS", "1536")
 
-    profile_path = (
-        Path(__file__).resolve().parent.parent.parent
-        / "agents" / "example_agent" / "profile.yaml"
-    )
+    from DefenseAgent.examples import EXAMPLE_PROFILE_PATH as profile_path
     assert profile_path.is_file()
 
     # Patch out the mem0 stack so we don't touch a real DB.

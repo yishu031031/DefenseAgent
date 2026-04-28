@@ -3,7 +3,8 @@
 #
 # Edit this file (or copy it) and pass the path to AgentConfig:
 #
-#     config = AgentConfig(profile="agents/example_agent/profile.yaml")
+#     from DefenseAgent.examples import EXAMPLE_PROFILE_PATH
+#     config = AgentConfig(profile=EXAMPLE_PROFILE_PATH)
 #     agent  = ReActAgent(config)
 #
 # Top-level key MUST be `agent:`. Every nested block under `agent:` is optional

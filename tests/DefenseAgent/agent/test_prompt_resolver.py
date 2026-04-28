@@ -187,10 +187,7 @@ def test_extra_instructions_blank_is_ignored():
 # ---------- end-to-end via the shipped example_agent bundle ----------
 
 
-_EXAMPLE_PROFILE = (
-    Path(__file__).resolve().parent.parent.parent.parent
-    / "agents" / "example_agent" / "profile.yaml"
-)
+from DefenseAgent.examples import EXAMPLE_PROFILE_PATH as _EXAMPLE_PROFILE
 
 
 @pytest.mark.skipif(not _EXAMPLE_PROFILE.is_file(), reason="example_agent bundle not present")

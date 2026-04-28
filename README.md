@@ -6,8 +6,9 @@ A Python harness for building single-agent LLM applications. Define an agent in 
 
 ```python
 from DefenseAgent.agent import AgentConfig, ReActAgent
+from DefenseAgent.examples import EXAMPLE_PROFILE_PATH
 
-config = AgentConfig(profile="agents/example_agent/profile.yaml")
+config = AgentConfig(profile=EXAMPLE_PROFILE_PATH)
 agent  = ReActAgent(config)
 result = await agent.run("Summarise today's plan in one sentence.")
 ```
@@ -84,8 +85,9 @@ Embedding: a separate `EMBEDDING_*` block. Common pairings:
 ```python
 import asyncio
 from DefenseAgent.agent import AgentConfig, ReActAgent
+from DefenseAgent.examples import EXAMPLE_PROFILE_PATH
 
-config = AgentConfig(profile="agents/example_agent/profile.yaml")
+config = AgentConfig(profile=EXAMPLE_PROFILE_PATH)
 
 async def main():
     async with ReActAgent(config) as agent:
@@ -103,7 +105,7 @@ python scripts/react_tools_memory_demo.py
 
 ## Building your own agent
 
-Copy `agents/example_agent/` to a new directory and edit `profile.yaml`. Each block under `agent:` is independent and optional except identity. All fields are validated by pydantic with `extra="forbid"`.
+Copy `DefenseAgent/examples/example_agent/` (also available at runtime as `EXAMPLE_AGENT_DIR` in `DefenseAgent.examples`) to a new directory and edit `profile.yaml`. Each block under `agent:` is independent and optional except identity. All fields are validated by pydantic with `extra="forbid"`.
 
 ### `llm:`
 
@@ -215,7 +217,7 @@ Each MCP entry must specify exactly one of `command:` (stdio) or `url:` (network
 **1. Relative file path.** Resolved against the profile's directory and loaded via `importlib.util.spec_from_file_location`. No `sys.path` setup needed.
 
 ```
-agents/example_agent/
+DefenseAgent/examples/example_agent/
 ├── profile.yaml
 ├── python_tools/
 │   └── calc.py            # def calculator(expression: str) -> str

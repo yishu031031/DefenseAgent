@@ -11,7 +11,7 @@ Typical use:
     from DefenseAgent import AgentConfig, ReActAgent
 
     config = AgentConfig(
-        profile="agents/example_agent/profile.yaml",
+        profile="DefenseAgent/examples/example_agent/profile.yaml",
         tools=[calculator, web_search],   # plain Python functions
         use_memory=True,
         use_reflection=True,

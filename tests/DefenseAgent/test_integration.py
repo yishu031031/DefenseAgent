@@ -22,10 +22,8 @@ from DefenseAgent.tools import ToolRegistry
 
 
 def _example_profile_path() -> Path:
-    return (
-        Path(__file__).resolve().parent.parent.parent
-        / "agents" / "example_agent" / "profile.yaml"
-    )
+    from DefenseAgent.examples import EXAMPLE_PROFILE_PATH
+    return EXAMPLE_PROFILE_PATH
 
 
 def _read_log(path: Path) -> list[dict]:
