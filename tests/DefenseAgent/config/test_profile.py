@@ -343,6 +343,23 @@ def test_agent_profile_accepts_empty_persona_fields(field):
     assert getattr(profile, field) == ""
 
 
+@pytest.mark.parametrize("field", ["traits", "backstory", "initial_plan"])
+def test_agent_profile_treats_none_as_default_for_optional_persona_fields(field):
+    """A blank YAML key like `traits:` parses to None — pydantic must treat that as 'use default' rather than rejecting with string_type. Reproduces the regression hit by users on 0.1.2."""
+    data = _minimal_identity()
+    data[field] = None
+    profile = AgentProfile(**data)
+    assert getattr(profile, field) == ""
+
+
+def test_cognitive_config_treats_none_planning_horizon_as_default():
+    """Same coercion for CognitiveConfig.planning_horizon — blank YAML key shouldn't crash."""
+    data = _minimal_identity()
+    data["cognitive"] = {"planning_horizon": None}
+    profile = AgentProfile(**data)
+    assert profile.cognitive.planning_horizon == "1 day"
+
+
 def test_agent_profile_rejects_negative_age():
     data = _minimal_identity()
     data["age"] = -1

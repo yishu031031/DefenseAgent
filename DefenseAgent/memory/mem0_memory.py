@@ -78,7 +78,14 @@ class Mem0Memory(MsDefaultMemory):
 
     def _init_memory_obj(self):
         """Build mem0.Memory directly from the DictConfig's `mem0_config` block, bypassing ms-agent's hardcoded service-URL translation so custom embedder/LLM endpoints (OpenRouter, vLLM, etc.) are honoured."""
-        import mem0
+        try:
+            import mem0
+        except ImportError as e:
+            raise ImportError(
+                "DefenseAgent's memory subsystem requires the optional `mem0ai` package. "
+                "Install it with: `pip install 'defense-agent[memory]'` "
+                "(or pass `use_memory=False` to AgentConfig if you don't need persistent memory)."
+            ) from e
         from omegaconf import OmegaConf
         cfg = OmegaConf.to_container(self.config.mem0_config, resolve=True)
         return mem0.Memory.from_config(cfg)

@@ -50,21 +50,39 @@ result = await agent.run("用一句话总结今天的计划。")
 
 ## 安装
 
+**默认安装** —— 第一次用推荐这条:
+
+```bash
+pip install 'defense-agent[memory]'
+```
+
+这是能让 `agent.run()` 在框架默认配置下(`use_memory=True`)直接跑起来的最小安装。它在核心依赖之上拉入 `mem0ai` + `fastembed`。
+
+如果你**确认**不需要持久化 memory(不用 `memory_recall`、不存对话历史),裸装就够 —— 但你必须在 config 里显式关掉 memory:
+
 ```bash
 pip install defense-agent
 ```
 
-按需勾选 extras —— 哪个模块要用,装哪个:
+```python
+config = AgentConfig(profile=..., use_memory=False)   # 裸装必须加这行
+```
 
-| Extra | 拉入的依赖 | 何时启用 |
+完整 extras 表:
+
+| Extra | 拉入的依赖 | 何时需要 |
 |---|---|---|
-| `defense-agent[memory]` | `mem0ai`、`fastembed` | 想用持久化 memory + `memory_recall` 工具 |
-| `defense-agent[rag]` | `llama-index-core`、`llama-index-embeddings-openai-like`、`llama-index-retrievers-bm25`、`pdfplumber`、`beautifulsoup4`、`Pillow` | 想用文档 RAG + `rag_search` 工具 |
-| `defense-agent[mcp]` | `mcp` | 想接 MCP 工具服务器 |
-| `defense-agent[all]` | memory + rag + mcp | 一次性全装 |
+| `defense-agent[memory]` | `mem0ai`、`fastembed` | 默认配置可用 + 持久化 memory + `memory_recall` 工具 |
+| `defense-agent[rag]` | `llama-index-core`、`llama-index-embeddings-openai-like`、`llama-index-retrievers-bm25`、`pdfplumber`、`beautifulsoup4`、`Pillow` | profile 里 `rag.enabled: true` + `rag_search` 工具 |
+| `defense-agent[mcp]` | `mcp` | 连 MCP 工具服务器(`tools.mcp:` 条目) |
+| `defense-agent[all]` | memory + rag + mcp | 一次性全装,所有子系统都能用 |
 | `defense-agent[dev]` | `pytest`、`pytest-asyncio` | 跑测试套件 |
 
 要求 Python ≥ 3.10。核心安装会拉入 `openai` + `anthropic` HTTP 客户端,以及 `ms-agent`(`ms-agent` 间接拉入 `torch`)。第一次安装大约 1 GB,留足磁盘和带宽。
+
+### 提前提醒:第一次跑会有上游 warning
+
+memory 子系统启动时,`mem0`/`ms-agent` 可能打出 `Failed to load spaCy lemma model` 或 `fastembed not installed — BM25 keyword search disabled` 之类的消息。这些是 `mem0ai` 自己的功能探测提示 —— **可以忽略**,agent 没有它们也照常跑。想消掉的话装上那些可选包(`pip install mem0ai[nlp] fastembed`)。
 
 ## 快速开始 —— 从零跑通一个 agent
 

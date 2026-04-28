@@ -24,6 +24,13 @@ class ConfigValidationError(ConfigError):
 _STRICT_MODEL_CONFIG = ConfigDict(extra="forbid")
 
 
+def _drop_none_for_keys(data: Any, keys: tuple[str, ...]) -> Any:
+    """In a `mode='before'` validator, drop entries whose value is None for the listed keys. This makes a blank YAML key (parsed as None) behave like an omitted key — the schema's default kicks in instead of pydantic crashing on `string_type`."""
+    if not isinstance(data, dict):
+        return data
+    return {k: v for k, v in data.items() if not (k in keys and v is None)}
+
+
 class CognitiveConfig(BaseModel):
     """Knobs that control the agent's cognitive loop (reflection threshold, plan horizon, etc.)."""
 
@@ -33,6 +40,12 @@ class CognitiveConfig(BaseModel):
     reflection_threshold: int = Field(ge=1, default=5)
     importance_threshold: float = Field(ge=1, le=10, default=7)
     planning_horizon: str = Field(min_length=1, default="1 day")
+
+    @model_validator(mode="before")
+    @classmethod
+    def _coerce_blank_yaml_keys(cls, data: Any) -> Any:
+        """Treat `planning_horizon:` (blank YAML key → None) as 'omitted' so the default fires."""
+        return _drop_none_for_keys(data, ("planning_horizon",))
 
 
 class MemoryConfig(BaseModel):
@@ -158,6 +171,12 @@ class AgentProfile(BaseModel):
     backstory: str = ""
     initial_plan: str = ""
     cognitive: CognitiveConfig = Field(default_factory=CognitiveConfig)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _coerce_blank_yaml_keys(cls, data: Any) -> Any:
+        """Treat blank YAML keys (`traits:`, `backstory:`, `initial_plan:` parsed as None) as 'omitted' so the schema defaults fire instead of pydantic rejecting None as a non-string."""
+        return _drop_none_for_keys(data, ("traits", "backstory", "initial_plan"))
     memory: MemoryConfig = Field(default_factory=MemoryConfig)
     rag: RAGConfig = Field(default_factory=RAGConfig)
     tools: ToolsConfig = Field(default_factory=ToolsConfig)

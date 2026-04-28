@@ -50,21 +50,39 @@ result = await agent.run("Summarise today's plan in one sentence.")
 
 ## Install
 
+**Default install** — recommended for first-time users:
+
+```bash
+pip install 'defense-agent[memory]'
+```
+
+This is the smallest install that runs `agent.run()` with the framework's default config (`use_memory=True`). It pulls in `mem0ai` + `fastembed` on top of the core deps.
+
+If you only need a stateless agent (no `memory_recall`, no persistence), the bare install is enough — but you must explicitly disable memory in your config:
+
 ```bash
 pip install defense-agent
 ```
 
-Optional extras for the heavier subsystems — install only the ones you need:
+```python
+config = AgentConfig(profile=..., use_memory=False)   # required for bare install
+```
 
-| Extra | Pulls in | Enable when |
+The full table of extras:
+
+| Extra | Pulls in | Required for |
 |---|---|---|
-| `defense-agent[memory]` | `mem0ai`, `fastembed` | You want persistent agent memory + the `memory_recall` tool |
-| `defense-agent[rag]` | `llama-index-core`, `llama-index-embeddings-openai-like`, `llama-index-retrievers-bm25`, `pdfplumber`, `beautifulsoup4`, `Pillow` | You want document RAG + the `rag_search` tool |
-| `defense-agent[mcp]` | `mcp` | You want to connect to MCP tool servers |
-| `defense-agent[all]` | memory + rag + mcp | One-shot install |
+| `defense-agent[memory]` | `mem0ai`, `fastembed` | Default config to work; persistent memory + the `memory_recall` tool |
+| `defense-agent[rag]` | `llama-index-core`, `llama-index-embeddings-openai-like`, `llama-index-retrievers-bm25`, `pdfplumber`, `beautifulsoup4`, `Pillow` | `rag.enabled: true` profiles + the `rag_search` tool |
+| `defense-agent[mcp]` | `mcp` | Connecting to MCP tool servers (entries under `tools.mcp:`) |
+| `defense-agent[all]` | memory + rag + mcp | One-shot — every subsystem usable with no further installs |
 | `defense-agent[dev]` | `pytest`, `pytest-asyncio` | Running the test suite |
 
 Requires Python ≥ 3.10. The core install pulls in `openai` + `anthropic` HTTP clients and `ms-agent` (which transitively brings in `torch` for its tooling pipeline). Plan for ~1 GB on the first install.
+
+### Heads-up: upstream warnings on first run
+
+When memory subsystem starts, `mem0`/`ms-agent` may print warnings like `Failed to load spaCy lemma model` or `fastembed not installed — BM25 keyword search disabled`. These are upstream feature-detection messages from `mem0ai` itself — they're **safe to ignore**, and the agent runs without them. If you want them silenced, install the extra optional pieces those packages mention (`pip install mem0ai[nlp] fastembed`).
 
 ## Quickstart — from zero to a running agent
 
