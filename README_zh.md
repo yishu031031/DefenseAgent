@@ -80,9 +80,11 @@ config = AgentConfig(profile=..., use_memory=False)   # 裸装必须加这行
 
 要求 Python ≥ 3.10。核心安装会拉入 `openai` + `anthropic` HTTP 客户端,以及 `ms-agent`(`ms-agent` 间接拉入 `torch`)。第一次安装大约 1 GB,留足磁盘和带宽。
 
-### 关于启动 log
+### 关于启动 log 和文件落地
 
 从 0.1.4 起,`defense-agent[memory]` 已经把 `mem0ai[nlp]` 和 `fastembed` 都带上,memory 初始化默认就是安静的。
+
+从 0.1.5 起,`import DefenseAgent` 还会顺手抑制掉 ms-agent 默认在当前工作目录里建的 `ms_agent.log`。(上游 `ms_agent.utils.logger` 在被 import 的瞬间无条件给 `<cwd>/ms_agent.log` 挂一个 FileHandler —— DefenseAgent 现在在我们任何子模块碰到它之前就把那个 FileHandler 摘掉。终端上 `[INFO:ms_agent] ...` 那些 log 还会照常打到 stderr。如果你明确想要 ms-agent 的文件日志,自己调 `ms_agent.utils.logger.get_logger(log_file='your-path.log')`,我们的 patch 会让它正常工作。)
 
 如果你(或下游用户)绕过 extras 直接 `pip install mem0ai`,可能看到 `Failed to load spaCy lemma model` / `fastembed not installed — BM25 keyword search disabled` 之类的消息。这些是 mem0 的可选特性探测 —— **可以忽略**,agent 照常工作。装回 `defense-agent[memory]`(或者 `pip install 'mem0ai[nlp]' fastembed`)就清干净。
 

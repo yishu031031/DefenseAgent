@@ -80,9 +80,11 @@ The full table of extras:
 
 Requires Python ≥ 3.10. The core install pulls in `openai` + `anthropic` HTTP clients and `ms-agent` (which transitively brings in `torch` for its tooling pipeline). Plan for ~1 GB on the first install.
 
-### About startup messages
+### About startup messages and stray files
 
 Since 0.1.4, `defense-agent[memory]` already pulls `mem0ai[nlp]` and `fastembed`, so memory init is silent out of the box.
+
+Since 0.1.5, `import DefenseAgent` also suppresses ms-agent's default `<cwd>/ms_agent.log` file. (Upstream's `ms_agent.utils.logger` unconditionally creates a `ms_agent.log` in the user's working directory the moment any ms-agent submodule is imported — DefenseAgent now removes that FileHandler before any of our submodules touch it. Terminal `[INFO:ms_agent] ...` log lines still appear on stderr unchanged. If you explicitly want a ms-agent log file, call `ms_agent.utils.logger.get_logger(log_file='your-path.log')` and our patch will leave it alone.)
 
 If you (or a downstream user) ever installed `mem0ai` directly with bare `pip install mem0ai` and see messages like `Failed to load spaCy lemma model` or `fastembed not installed — BM25 keyword search disabled`, those are mem0's optional-feature probes — **safe to ignore**, the agent runs fine without them. Install via `defense-agent[memory]` (or just `pip install 'mem0ai[nlp]' fastembed`) to clean them up.
 
