@@ -417,6 +417,31 @@ So `reflection_threshold: 5` means "kick off reflection roughly every 5 runs/tur
 
 Reflections are visible to subsequent `memory_recall` calls — they let the agent build long-running understanding of itself across runs.
 
+#### When reflection actually pays off — and when it doesn't
+
+Reflection costs at least 2 extra LLM calls per cycle (`ImportanceScorer` + `InsightSynthesizer`), so it earns its keep only in scenarios where those reflection records are read back later. Be honest about which one you're in:
+
+| Scenario | Reflection helps? | Recommendation |
+|---|---|---|
+| **One-off script** — `python my_agent.py` runs once and exits | **No.** Reflection writes 3 records, the process ends, nothing reads them. Pure waste. | `AgentConfig(profile=..., reflect_after_run=False)` |
+| **Demo / quickstart** — exploring DefenseAgent for the first time | No. Same as above. | Same as above. |
+| **Same `agent_id` across many sessions** — long-running assistant, recurring batch processing of similar tasks | **Yes.** Reflections from session N surface in session N+1 via `memory_recall`. The longer the agent lives, the more value compounds. | Keep default (`reflect_after_run=True`). |
+| **Generative-Agents-style simulations** — multi-day simulated worlds, social agents | **Yes — by design.** This is the use case `Reflector` was built for ([Park et al. 2023](https://arxiv.org/abs/2304.03442)). | Keep default. Maybe lower `reflection_threshold` to fire more often. |
+| **High-volume short tasks** — a customer-service agent handling hundreds of independent tickets | **Maybe.** Helpful only if reflections about agent failure modes survive across tickets. | Run with reflection on for a while, inspect mem0 records via `scripts/dump_memory.py`, decide. |
+
+There's also a precondition for any of the "yes" cases: **the LLM in subsequent runs has to actually call `memory_recall`**. Reflections aren't auto-injected into the prompt — they only surface when the agent actively looks them up. A system prompt that explicitly tells the agent "before answering, call `memory_recall` for relevant prior context" makes reflection much more useful; a prompt that doesn't may waste the entire mechanism.
+
+If you're building a one-shot tool, **disable reflection up front** to skip those LLM calls entirely:
+
+```python
+config = AgentConfig(
+    profile=...,
+    reflect_after_run=False,    # skip the post-run reflection cycle
+)
+```
+
+You can also disable the underlying subsystem completely with `use_reflection=False` — that skips constructing the `Reflector` object at all. Use this when you have no `Reflector` need across the entire agent's lifetime.
+
 #### `importance_threshold`
 
 Used by `ImportanceScorer` (LLM-based 1–10 rating per record). During reflection, records below this threshold are filtered out before being fed to the synthesizer — keeps the LLM focused on substantive content rather than chitchat. Default 7 is conservative; lower to 5 if your records skew lower-impact.

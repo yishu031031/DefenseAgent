@@ -417,6 +417,31 @@ result = await agent.run("multi-step task")
 
 反思之后产生的记录后续 `memory_recall` 能看到 —— 让 agent 跨 run 长期建立对自己的理解。
 
+#### 反思什么时候真的有用,什么时候没用
+
+每次反思周期至少多花 2 次 LLM 调用(`ImportanceScorer` + `InsightSynthesizer`),所以它只在"未来真的会有人读这些 reflection 记录"的场景下才划算。先认清自己属于哪种:
+
+| 场景 | 反思有用吗? | 建议 |
+|---|---|---|
+| **一次性脚本** —— `python my_agent.py` 跑一次就退出 | **没用。** 反思写 3 条记录,进程结束,无人再读。纯浪费。 | `AgentConfig(profile=..., reflect_after_run=False)` |
+| **demo / quickstart** —— 第一次试 DefenseAgent | 没用。同上。 | 同上。 |
+| **同 `agent_id` 跨多个 session** —— 长期运行的助手、相似任务的反复批处理 | **有用。** 第 N 次 session 的反思会在第 N+1 次 session 通过 `memory_recall` 露面。agent 跑得越久,价值越累积。 | 保持默认(`reflect_after_run=True`)。 |
+| **Generative Agents 风格的模拟** —— 多天模拟世界、社交 agent | **有用 —— 这就是设计目标。** `Reflector` 就是为这种场景做的([Park et al. 2023](https://arxiv.org/abs/2304.03442))。 | 保持默认。可以把 `reflection_threshold` 调小让它更频繁。 |
+| **高频短任务** —— 客服 agent 处理几百个独立工单 | **看情况。** 关于 agent 失败模式的反思能跨工单留存才有用。 | 先开一阵子,用 `scripts/dump_memory.py` 看看 mem0 里实际写了什么再定。 |
+
+任何"有用"的场景都还有一个前提:**后续 run 里 LLM 得主动调 `memory_recall`**。反思不会自动塞进 prompt —— agent 必须主动去查才能用上。在 system prompt 里明确写"回答前先 `memory_recall` 查相关上下文"能让反思的回报大幅提升;不写就可能整个机制空转。
+
+如果你在做一次性工具,**前期就关掉反思**,跳过那两次 LLM 调用:
+
+```python
+config = AgentConfig(
+    profile=...,
+    reflect_after_run=False,    # 跳过 run 之后的反思周期
+)
+```
+
+更彻底的做法:`use_reflection=False`,连 `Reflector` 对象都不构造。整个 agent 生命周期都不需要反思时用这个。
+
 #### `importance_threshold`
 
 `ImportanceScorer` 用(LLM 给每条记录打 1–10 分)。反思过程中,低于此阈值的记录在送给 synthesizer 之前会被过滤掉 —— 让 LLM 聚焦实质内容,而不是闲聊。默认 7 偏保守;记录普遍偏低影响时调到 5。
