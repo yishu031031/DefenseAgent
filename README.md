@@ -13,6 +13,30 @@ agent  = ReActAgent(config)
 result = await agent.run("Summarise today's plan in one sentence.")
 ```
 
+## Contents
+
+- [Features](#features)
+- [Install](#install)
+- [Quickstart — from zero to a running agent](#quickstart--from-zero-to-a-running-agent)
+- [Configure](#configure)
+  - [Providers and credentials](#providers-and-credentials)
+- [Building your own agent](#building-your-own-agent) — full profile reference
+  - [`llm:`](#llm)
+  - [Identity](#identity)
+  - [`cognitive:`](#cognitive)
+  - [`memory:`](#memory)
+  - [`rag:`](#rag)
+  - [`tools:`](#tools) — skills / MCP / Python
+  - [`prompt:`](#prompt)
+- [Built-in tools](#built-in-tools)
+- [Agent classes](#agent-classes)
+- [Multimodal input](#multimodal-input) — vision models, image handling, OCR
+- [Customization & dependency injection](#customization--dependency-injection)
+- [Architecture](#architecture)
+- [Module layout](#module-layout)
+- [Develop locally](#develop-locally)
+- [License](#license)
+
 ## Features
 
 - **One-file agent definition.** Identity, LLM provider, tools, memory, RAG, system prompt — all in one strictly-validated YAML (`extra="forbid"`; unknown fields raise `ConfigValidationError` on load).
@@ -21,7 +45,7 @@ result = await agent.run("Summarise today's plan in one sentence.")
 - **Three tool sources, one registry.** Local skill directories (`SKILL.md` bundles), MCP servers (stdio / SSE / WebSocket / streamable-http), Python functions (referenced from the profile by file path or dotted module).
 - **Persistent memory with a built-in tool.** mem0-backed Qdrant storage; agents automatically expose a `memory_recall` tool to the LLM. `ContextCompressor` keeps the working context within a configured token budget.
 - **Optional RAG with a built-in tool.** Drop documents into a directory, set `rag.enabled: true`, get a `rag_search` tool. Embedder credentials follow the same per-field profile→env fallback.
-- **Multimodal input.** `agent.run(task, images=[...])` sends an OpenAI-style content-block message. Each image accepts a local file path, an `http(s)://` URL, or a `data:` URL. Supported on every OpenAI-compatible provider.
+- **Optional multimodal input.** When you do need vision, `agent.run(task, images=[...])` attaches images to the user turn. Disabled by default — see the dedicated [Multimodal input](#multimodal-input) section.
 - **Dependency-injectable.** LLM, memory, tools, reflector, compressor and logger are all replaceable in `AgentConfig` for tests and custom wiring.
 
 ## Install
@@ -142,7 +166,7 @@ Resolution order, per field: profile YAML → env var → schema default. Whites
 | `openai` | `OpenAICompatibleAdapter` | `sk-…` or `sk-proj-…` | `https://api.openai.com/v1` | `gpt-4o-mini`, `gpt-4o`, `o3-mini` |
 | `anthropic` | `AnthropicAdapter` | `sk-ant-…` | `https://api.anthropic.com` | `claude-sonnet-4-6`, `claude-opus-4-7` |
 | `deepseek` | `OpenAICompatibleAdapter` | `sk-…` | `https://api.deepseek.com/v1` | `deepseek-chat`, `deepseek-reasoner` |
-| `qwen` (DashScope, OpenAI-compat) | `OpenAICompatibleAdapter` | `sk-…` | `https://dashscope.aliyuncs.com/compatible-mode/v1` | `qwen-plus`, `qwen-vl-max`, `qwen-vl-plus` |
+| `qwen` (DashScope, OpenAI-compat) | `OpenAICompatibleAdapter` | `sk-…` | `https://dashscope.aliyuncs.com/compatible-mode/v1` | `qwen-plus`, `qwen-max`, `qwen-turbo` |
 | `google` (OpenAI-compat endpoint) | `OpenAICompatibleAdapter` | `sk-…` | `https://generativelanguage.googleapis.com/v1beta/openai` | `gemini-2.0-flash` |
 | `vllm` (self-hosted) | `OpenAICompatibleAdapter` | any string (e.g. `EMPTY` / `token-not-needed`) | depends on deployment, e.g. `http://localhost:8000/v1` | whatever the vLLM server is serving |
 
@@ -260,9 +284,8 @@ Provided your profile leaves `llm.provider` / `llm.model` blank (or you don't ha
 | Provider | Things to know |
 |---|---|
 | `openai` | Both `sk-…` and `sk-proj-…` keys work. Reasoning models (`o3-mini`, `o1`) cost more and require a slightly different request shape — adapter handles it transparently. |
-| `anthropic` | Tool calls supported. List-shape multimodal `content` is rejected with `LLMAdapterError` (Anthropic uses a different format). For Claude vision, contributions welcome — see `DefenseAgent/llm/anthropic.py`. |
+| `anthropic` | Tool calls supported. The Anthropic wire format for non-text content differs from OpenAI's, so list-shape `content` reaches the adapter as `LLMAdapterError`. See [Multimodal input](#multimodal-input) for vision-capable provider choices. |
 | `deepseek` | `deepseek-reasoner` returns thinking tokens in `reasoning_content` — the adapter strips them from `Message.content` so downstream code doesn't see the chain-of-thought. To inspect them, look at the raw response. |
-| `qwen` | Vision models are `qwen-vl-max` / `qwen-vl-plus`. Use them when passing `images=[...]` to `agent.run()`. |
 | `google` | Uses Google's OpenAI-compatible endpoint at `generativelanguage.googleapis.com/v1beta/openai`. Native Gemini SDK is not used. |
 | `vllm` | `VLLM_API_KEY=EMPTY` (literal string) is the convention. `VLLM_MODEL` must match what's loaded on the server (see vLLM's `--served-model-name`). |
 
@@ -993,42 +1016,137 @@ class AgentStep:
 
 ## Multimodal input
 
-All three agents accept an optional `images=` argument on `run()`:
+DefenseAgent can attach images to the user turn so the LLM reasons about visual content alongside text. This is opt-in — you only pay the multimodal cost when you actually pass `images=`. Everything in the rest of this README applies unchanged when you don't.
+
+### What "multimodal" means here
+
+The OpenAI chat-completions API allows the `content` field of a user message to be a **list of content blocks** instead of a plain string. Each block is either text or an `image_url`. DefenseAgent's `Message` type already supports this shape, and `agent.run(task, images=[...])` is just an ergonomic helper that builds the list for you.
+
+Useful for:
+
+- Visual Q&A — "what's in this screenshot?", "is the chart in this PNG showing growth or decline?"
+- OCR — extracting text from receipts, scanned PDFs (one page at a time), screenshots of code
+- Visual debugging — passing a UI screenshot to an agent that suggests CSS fixes
+- Image-grounded reasoning — comparing two product photos, identifying anomalies, layout review
+
+It is **not** for: image generation (no SDXL etc. wired in), video, audio. Just static images going into the model.
+
+### Pick a vision-capable model
+
+The default chat models in the [Providers](#providers-and-credentials) table are text-only. To use `images=`, switch to a vision-capable model from the same provider — usually a different `<PROVIDER>_MODEL` value, no other env changes:
+
+| Provider | Vision-capable models | Notes |
+|---|---|---|
+| OpenAI | `gpt-4o`, `gpt-4o-mini`, `gpt-4-turbo` (vision endpoint) | `gpt-4o-mini` is the cheap default for OCR-style tasks |
+| Qwen (DashScope) | `qwen-vl-max`, `qwen-vl-plus`, `qwen-vl-max-latest` | The `-vl-` prefix signals visual; non-VL Qwen models won't accept images |
+| GLM (智谱, OpenAI-compat) | `glm-4v`, `glm-4v-flash` | Hit GLM's OpenAI-compatible endpoint via `provider: openai` + `OPENAI_BASE_URL=https://open.bigmodel.cn/api/paas/v4` |
+| Kimi (Moonshot, OpenAI-compat) | `moonshot-v1-32k-vision-preview` | Same pattern — point `OPENAI_BASE_URL` at Moonshot |
+| vLLM (self-hosted) | Anything visual you serve, e.g. `Qwen/Qwen2-VL-7B-Instruct`, `llava-hf/llava-1.5-13b-hf` | The vLLM server must be launched with `--limit-mm-per-prompt image=N` |
+| **Anthropic** | **Not supported** in this version — see "Anthropic limitation" below |
+
+Setup is the same as any other model — just point `<PROVIDER>_MODEL` at a vision-capable id:
+
+```bash
+# .env — Qwen-VL via DashScope
+AGENT_LAB_LLM_PROVIDER=qwen
+QWEN_API_KEY=sk-…
+QWEN_MODEL=qwen-vl-max
+QWEN_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
+```
+
+### End-to-end: image recognition example
+
+Concrete working example. Drop a screenshot into your project, point the agent at it:
 
 ```python
+import asyncio
 from pathlib import Path
+from DefenseAgent.agent import AgentConfig, ReActAgent
+from DefenseAgent.examples import EXAMPLE_PROFILE_PATH
 
-result = await agent.run(
-    "What's in this image, and how does it compare to this URL?",
-    images=[
-        Path("./screenshot.png"),
-        "https://example.com/photo.jpg",
-    ],
-)
+async def main():
+    agent = ReActAgent(AgentConfig(profile=EXAMPLE_PROFILE_PATH))
+
+    result = await agent.run(
+        "Describe what's in this image, including any text you can read.",
+        images=[Path("./screenshot.png")],
+    )
+    print(result.final_answer)
+
+asyncio.run(main())
 ```
 
-When `images` is provided, the user turn is sent as an OpenAI content-block list:
+```
+$ python recognise.py
+The image shows a terminal with the output of `pytest -v`. Visible test names
+include test_agent_profile_minimal_with_only_id_and_name. The footer reads
+"532 passed, 3 skipped in 4.88s". Background appears to be the iTerm2 default
+dark theme.
+```
+
+The agent treats the image as part of the user turn — the LLM sees it natively, no separate OCR pass. Quality of the recognition is bounded by the vision model you picked: `qwen-vl-max` or `gpt-4o` for production work; smaller models are noticeably worse at small text or fine detail.
+
+### How images flow through the system
+
+`agent.run(task, images=[...])` walks each entry in `images=`, normalises it into a single URL string, and builds the OpenAI content-block message. Three input types are accepted:
+
+| Input | What happens to it |
+|---|---|
+| `Path` / local file path string | The file is read, base64-encoded, and turned into a `data:<mime>;base64,…` URL. MIME is inferred from the file extension (`.png` → `image/png`, `.jpg` → `image/jpeg`, …); unknown extensions default to `image/png`. |
+| `http://` or `https://` URL string | Passed through unchanged. The provider fetches the URL itself; DefenseAgent never downloads it. |
+| `data:` URL string (already encoded) | Passed through unchanged — useful when you have an in-memory `BytesIO` you've already encoded. |
+
+The resolved URLs end up in this exact request shape (this is what the OpenAI-compatible adapter sends):
 
 ```python
-[{"type": "text", "text": "<task>"},
- {"type": "image_url", "image_url": {"url": "<resolved-url-1>"}},
- {"type": "image_url", "image_url": {"url": "<resolved-url-2>"}}]
+{
+  "role": "user",
+  "content": [
+    {"type": "text", "text": "<your task string>"},
+    {"type": "image_url", "image_url": {"url": "data:image/png;base64,iVBOR..."}},
+    {"type": "image_url", "image_url": {"url": "https://example.com/photo.jpg"}},
+  ]
+}
 ```
 
-Each image entry can be:
+The agent does **no preprocessing** — no resizing, no compression, no quality normalisation. Whatever bytes you point it at, the provider sees. This matters for two reasons:
 
-| Input | Behaviour |
+1. **Base64 encoding inflates payload size by ~33%.** A 5 MB PNG becomes ~6.7 MB of base64. Large images add real latency to every call. Resize before passing if your model can work with smaller dimensions.
+2. **Provider-specific size limits apply.** OpenAI rejects request bodies above ~20 MB; DashScope's limits vary by model. Hit the limit and you'll see a 4xx from the provider, not a friendly DefenseAgent error.
+
+For local files, use a `Path` or string — both work. The base64 conversion happens in `_resolve_image_url` (a single ~10-line module helper). For URLs, **prefer them over local files when the image is already public** — passing a URL skips the base64 inflation and lets the provider cache it.
+
+### Constraints and good practice
+
+- **One turn, multiple images:** the list is unbounded on DefenseAgent's side, but most providers cap the number of images per request (OpenAI: typically up to 10; Qwen-VL: similar). Hit the cap → request fails.
+- **Supported formats:** whatever the model supports. PNG and JPEG are universal; WebP, GIF (first frame), BMP work on most providers; HEIC and AVIF are spotty.
+- **Transparency:** PNG alpha channels are passed through verbatim. Vision models tend to ignore them.
+- **OCR-heavy use:** prefer high resolution (don't resize aggressively), pick a model marketed for OCR (`qwen-vl-max`, `gpt-4o`).
+- **Batch processing:** for many images, fire many `agent.run()` calls in parallel rather than stuffing them all into one turn — same total token cost but faster wall-clock and easier error isolation.
+
+### Where images get carried across multi-step agents
+
+| Agent | Image-carrying behaviour |
 |---|---|
-| `Path` or local file path string | Read, base64-encoded, emitted as `data:<mime>;base64,…`. MIME inferred from extension; defaults to `image/png`. |
-| `http://` or `https://` URL string | Passed through unchanged. |
-| `data:` URL string | Passed through unchanged. |
+| `SimpleAgent` | One turn, one call. Images attached to that single user message. |
+| `ReActAgent` | Images attached **only to the initial user turn**. Subsequent tool-result messages stay text — the LLM has already seen the images, doesn't need them re-attached. |
+| `PlanAndSolveAgent` | Images attached to **Phase 1 (plan) message** AND **every Phase 2 (execute-step) message**, so each phase that re-references the original task can re-inspect the visual content. Phase 3 (synthesis) is text-only — it summarises the per-step text outputs. |
 
-Provider compatibility:
+This means an n-step ReAct over an image makes one image-carrying call and (n-1) text-only follow-ups. Cost is roughly: `1 × (text + image) + (n-1) × text`. Not n × image.
 
-- **OpenAI-compatible adapters** (Qwen via DashScope, DeepSeek-VL, GLM, Kimi, vLLM serving multimodal models, OpenAI itself) consume the list-shape directly. Set `llm.model:` to a vision-capable model.
-- **Anthropic adapter** raises `LLMAdapterError` with an explicit message if list content arrives. The `Message` type already supports list content, so adding Claude vision later is a localised adapter change.
+### Anthropic limitation
 
-For `ReActAgent`, only the initial user turn carries images — subsequent tool-result messages stay text. For `PlanAndSolveAgent`, the Phase 1 plan message and every Phase 2 execute-step message carry the same images, so each phase can re-inspect the visual content.
+Claude's wire format for non-text content uses Anthropic's own `{"type": "image", "source": {...}}` block shape, **not** OpenAI's `{"type": "image_url", ...}` form. The `AnthropicAdapter` does not currently translate between them — passing list-shape `content` to it raises:
+
+```python
+LLMAdapterError: AnthropicAdapter received list-shape content but does not yet
+support multimodal translation. Use an OpenAI-compatible vision provider, or
+pass plain text content.
+```
+
+The `Message` type itself already accepts list content, so the missing piece is just a content-block translator inside the Anthropic adapter. PRs welcome — the change is localised to [`DefenseAgent/llm/anthropic.py`](DefenseAgent/llm/anthropic.py).
+
+For now, if you need vision: pick any of the OpenAI-compatible providers above.
 
 ## Customization & dependency injection
 

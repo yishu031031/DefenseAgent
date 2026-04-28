@@ -13,6 +13,30 @@ agent  = ReActAgent(config)
 result = await agent.run("用一句话总结今天的计划。")
 ```
 
+## 目录
+
+- [特性](#特性)
+- [安装](#安装)
+- [快速开始 —— 从零跑通一个 agent](#快速开始--从零跑通一个-agent)
+- [配置](#配置)
+  - [厂商与凭证](#厂商与凭证)
+- [一步步搭一个 Agent](#一步步搭一个-agent) —— 完整 profile 参考
+  - [`llm:`](#llm)
+  - [身份](#身份)
+  - [`cognitive:`](#cognitive)
+  - [`memory:`](#memory)
+  - [`rag:`](#rag)
+  - [`tools:`](#tools) —— skills / MCP / Python
+  - [`prompt:`](#prompt)
+- [内置工具](#内置工具)
+- [Agent 类](#agent-类)
+- [多模态输入](#多模态输入) —— 视觉模型、图片处理、OCR
+- [自定义与依赖注入](#自定义与依赖注入)
+- [架构](#架构)
+- [模块布局](#模块布局)
+- [本地开发](#本地开发)
+- [License](#license)
+
 ## 特性
 
 - **单文件 agent 定义。** 身份、LLM 厂商、工具、memory、RAG、system prompt —— 全部写在一份严格校验的 YAML 里(`extra="forbid"`,未知字段会在加载时抛 `ConfigValidationError`)。
@@ -21,7 +45,7 @@ result = await agent.run("用一句话总结今天的计划。")
 - **三种工具来源,统一一个 registry。** 本地 skill 目录(`SKILL.md` 包)、MCP 服务器(stdio / SSE / WebSocket / streamable-http)、Python 函数(profile 中按文件路径或点分模块引用)。
 - **持久化 memory + 内置工具。** mem0 + Qdrant 落盘存储;agent 自动暴露 `memory_recall` 工具给 LLM。`ContextCompressor` 在每次 LLM 调用前裁剪工作上下文。
 - **可选 RAG + 内置工具。** 把文档放进目录,设置 `rag.enabled: true`,获得 `rag_search` 工具。Embedder 凭证遵循同样的按字段 profile→env fallback。
-- **多模态输入。** `agent.run(task, images=[...])` 发送 OpenAI 风格的 content-block 消息。每张图片接受本地文件路径、`http(s)://` URL、或 `data:` URL。所有 OpenAI 兼容厂商都能直接消费。
+- **可选的多模态输入。** 真正需要视觉时,`agent.run(task, images=[...])` 把图片挂到 user turn。默认不启用 —— 详见独立的 [多模态输入](#多模态输入) 章节。
 - **可依赖注入。** LLM、memory、tools、reflector、compressor、logger 都能通过 `AgentConfig` 替换,方便测试和自定义接线。
 
 ## 安装
@@ -142,7 +166,7 @@ config = AgentConfig(profile=Path("./my_profile/profile.yaml"))
 | `openai` | `OpenAICompatibleAdapter` | `sk-…` 或 `sk-proj-…` | `https://api.openai.com/v1` | `gpt-4o-mini`、`gpt-4o`、`o3-mini` |
 | `anthropic` | `AnthropicAdapter` | `sk-ant-…` | `https://api.anthropic.com` | `claude-sonnet-4-6`、`claude-opus-4-7` |
 | `deepseek` | `OpenAICompatibleAdapter` | `sk-…` | `https://api.deepseek.com/v1` | `deepseek-chat`、`deepseek-reasoner` |
-| `qwen`(DashScope OpenAI 兼容) | `OpenAICompatibleAdapter` | `sk-…` | `https://dashscope.aliyuncs.com/compatible-mode/v1` | `qwen-plus`、`qwen-vl-max`、`qwen-vl-plus` |
+| `qwen`(DashScope OpenAI 兼容) | `OpenAICompatibleAdapter` | `sk-…` | `https://dashscope.aliyuncs.com/compatible-mode/v1` | `qwen-plus`、`qwen-max`、`qwen-turbo` |
 | `google`(OpenAI 兼容端点) | `OpenAICompatibleAdapter` | `sk-…` | `https://generativelanguage.googleapis.com/v1beta/openai` | `gemini-2.0-flash` |
 | `vllm`(自部署) | `OpenAICompatibleAdapter` | 任意字符串(常见 `EMPTY` / `token-not-needed`) | 取决于部署,例如 `http://localhost:8000/v1` | 取决于 vLLM 服务挂的什么模型 |
 
@@ -260,9 +284,8 @@ VLLM_BASE_URL=http://localhost:8000/v1
 | Provider | 注意点 |
 |---|---|
 | `openai` | `sk-…` 和 `sk-proj-…` 都支持。reasoning 模型(`o3-mini`、`o1`)更贵且请求形态略有不同 —— 适配器透明处理。 |
-| `anthropic` | 支持工具调用。多模态 list-shape `content` 会被拒绝并抛 `LLMAdapterError`(Anthropic 用另一种格式)。要支持 Claude 视觉,改 `DefenseAgent/llm/anthropic.py`。 |
+| `anthropic` | 支持工具调用。Anthropic 的非文本 content 走自己的 wire 格式,跟 OpenAI 不同 —— list-shape `content` 进到适配器会抛 `LLMAdapterError`。视觉模型选择参见 [多模态输入](#多模态输入)。 |
 | `deepseek` | `deepseek-reasoner` 在 `reasoning_content` 里返回思考 token —— 适配器把它从 `Message.content` 里剥掉,下游代码不会看到 chain-of-thought。要看的话直接看原始响应。 |
-| `qwen` | 视觉模型是 `qwen-vl-max` / `qwen-vl-plus`。在 `agent.run()` 里传 `images=[...]` 时用这两个。 |
 | `google` | 走 Google 的 OpenAI 兼容端点 `generativelanguage.googleapis.com/v1beta/openai`。原生 Gemini SDK 没用。 |
 | `vllm` | `VLLM_API_KEY=EMPTY`(字面字符串 EMPTY)是惯例。`VLLM_MODEL` 必须跟服务上挂的模型名一致(看 vLLM 的 `--served-model-name`)。 |
 
@@ -993,42 +1016,136 @@ class AgentStep:
 
 ## 多模态输入
 
-三种 agent 的 `run()` 都接受可选的 `images=` 参数:
+DefenseAgent 可以把图片挂到 user turn,让 LLM 同时基于文字和视觉内容推理。这是**按需开启** —— 只有真传 `images=` 时才走这条路径。不传时,本 README 其它一切照常生效。
+
+### "多模态"在这里指什么
+
+OpenAI 的 chat-completions 接口允许 user 消息的 `content` 是**一组 content block**而不是一段纯字符串。每个 block 要么是文字、要么是 `image_url`。DefenseAgent 的 `Message` 类型本来就支持这种形态,`agent.run(task, images=[...])` 只是个 ergonomic 帮手,帮你把 list 拼好。
+
+适用场景:
+
+- 视觉问答 —— "这张截图里是什么?" "这张 PNG 里的图表是涨还是跌?"
+- OCR —— 从收据、扫描 PDF(逐页)、代码截图里提取文字
+- 视觉调试 —— 把 UI 截图丢给 agent,让它建议 CSS 修复
+- 图像基础推理 —— 比较两张商品图、找异常、布局审查
+
+**不适用**:图像生成(没接 SDXL 之类)、视频、音频。只接收静态图片送进 LLM。
+
+### 选个支持视觉的模型
+
+[厂商列表](#厂商与凭证) 里的默认 chat 模型都是**纯文本**。要用 `images=`,在同一厂商下换一个支持视觉的 model id —— 通常只改 `<PROVIDER>_MODEL`,其它环境变量不动:
+
+| 厂商 | 支持视觉的模型 | 备注 |
+|---|---|---|
+| OpenAI | `gpt-4o`、`gpt-4o-mini`、`gpt-4-turbo`(视觉端点) | OCR 类任务最便宜的默认是 `gpt-4o-mini` |
+| Qwen(DashScope) | `qwen-vl-max`、`qwen-vl-plus`、`qwen-vl-max-latest` | `-vl-` 前缀代表视觉;非 VL 版的 Qwen 不接受图片 |
+| GLM(智谱,OpenAI 兼容) | `glm-4v`、`glm-4v-flash` | 走 GLM 的 OpenAI 兼容端点:`provider: openai` + `OPENAI_BASE_URL=https://open.bigmodel.cn/api/paas/v4` |
+| Kimi(Moonshot,OpenAI 兼容) | `moonshot-v1-32k-vision-preview` | 同上,把 `OPENAI_BASE_URL` 指向 Moonshot |
+| vLLM(自部署) | 服务上挂的任意视觉模型,例如 `Qwen/Qwen2-VL-7B-Instruct`、`llava-hf/llava-1.5-13b-hf` | vLLM 启动时要加 `--limit-mm-per-prompt image=N` |
+| **Anthropic** | **当前不支持** —— 见下面的 "Anthropic 限制" |
+
+设置流程跟其它模型一样,只把 `<PROVIDER>_MODEL` 换成视觉模型 id:
+
+```bash
+# .env —— DashScope 上的 Qwen-VL
+AGENT_LAB_LLM_PROVIDER=qwen
+QWEN_API_KEY=sk-…
+QWEN_MODEL=qwen-vl-max
+QWEN_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
+```
+
+### 端到端例子:图像识别
+
+完整可跑的例子。把截图丢进工程目录,让 agent 去看:
 
 ```python
+import asyncio
 from pathlib import Path
+from DefenseAgent.agent import AgentConfig, ReActAgent
+from DefenseAgent.examples import EXAMPLE_PROFILE_PATH
 
-result = await agent.run(
-    "这张图里是什么?跟下面这张 URL 比一下。",
-    images=[
-        Path("./screenshot.png"),
-        "https://example.com/photo.jpg",
-    ],
-)
+async def main():
+    agent = ReActAgent(AgentConfig(profile=EXAMPLE_PROFILE_PATH))
+
+    result = await agent.run(
+        "描述这张图片的内容,包含你能识别的文字。",
+        images=[Path("./screenshot.png")],
+    )
+    print(result.final_answer)
+
+asyncio.run(main())
 ```
 
-提供 `images` 时,user 这一轮以 OpenAI content-block 列表形态发出:
-
-```python
-[{"type": "text", "text": "<task>"},
- {"type": "image_url", "image_url": {"url": "<resolved-url-1>"}},
- {"type": "image_url", "image_url": {"url": "<resolved-url-2>"}}]
+```
+$ python recognise.py
+图片显示一个终端,里面是 `pytest -v` 的输出。可以看到测试名包括
+test_agent_profile_minimal_with_only_id_and_name,底部一行写着
+"532 passed, 3 skipped in 4.88s"。背景看起来是 iTerm2 默认的暗色主题。
 ```
 
-每张图片可以是:
+agent 把图片当作 user turn 的一部分 —— LLM 原生看到图,不需要单独走 OCR 流程。识别效果取决于你选的视觉模型:生产用 `qwen-vl-max` 或 `gpt-4o`;小模型在小字、细节上明显差。
+
+### 图片在系统里怎么流转
+
+`agent.run(task, images=[...])` 会逐项遍历 `images=`,每项归一化成一个 URL 字符串,再拼成 OpenAI content-block 消息。三种输入类型都接受:
 
 | 输入 | 处理方式 |
 |---|---|
-| `Path` 或本地文件路径字符串 | 读取后 base64 编码,生成 `data:<mime>;base64,…`。MIME 根据扩展名推断,未知扩展名默认 `image/png`。 |
-| `http://` 或 `https://` URL | 原样透传。 |
-| `data:` URL | 原样透传。 |
+| `Path` / 本地文件路径字符串 | 读取文件 → base64 编码 → 拼成 `data:<mime>;base64,…` URL。MIME 根据扩展名推断(`.png` → `image/png`、`.jpg` → `image/jpeg` …);未知扩展名默认 `image/png`。 |
+| `http://` 或 `https://` URL 字符串 | 原样透传。厂商自己去 fetch,DefenseAgent 不下载。 |
+| `data:` URL 字符串(已编码) | 原样透传 —— 适合手里已经是 `BytesIO` 自己编完码的场景。 |
 
-厂商兼容性:
+归一化后的 URL 进到这个最终请求形态(OpenAI 兼容适配器实际发出去的就是这个):
 
-- **OpenAI 兼容适配器**(DashScope 上的 Qwen、DeepSeek-VL、GLM、Kimi、托管多模态模型的 vLLM、OpenAI 自身)直接消费这种 list 形态。把 `llm.model:` 设为视觉模型即可。
-- **Anthropic 适配器** 收到 list content 时抛 `LLMAdapterError` 并附带明确说明。`Message` 类型本身已经支持 list content,后续要加 Claude 视觉只需在 Anthropic 适配器内部做局部改动。
+```python
+{
+  "role": "user",
+  "content": [
+    {"type": "text", "text": "<你的任务字符串>"},
+    {"type": "image_url", "image_url": {"url": "data:image/png;base64,iVBOR..."}},
+    {"type": "image_url", "image_url": {"url": "https://example.com/photo.jpg"}},
+  ]
+}
+```
 
-`ReActAgent` 只在最初的 user turn 携带图片,后续的 tool 结果消息保持纯文本。`PlanAndSolveAgent` 在 Phase 1 的规划消息和 Phase 2 的每一步执行消息都携带相同的图片,这样每个引用原始任务的阶段都能再看图。
+agent **不做任何预处理** —— 不缩放、不压缩、不调画质。你给什么字节,厂商就看什么字节。这有两个实际后果:
+
+1. **Base64 编码会让 payload 膨胀约 33%。** 5 MB 的 PNG 编完是 ~6.7 MB base64。大图会让每次调用明显变慢。模型能用小图就先缩再传。
+2. **厂商各有大小限制。** OpenAI 拒绝 ~20 MB 以上的 request body;DashScope 各模型限制不同。超了会被厂商以 4xx 拒,DefenseAgent 不会预先报友好错误。
+
+本地文件用 `Path` 或字符串都行 —— base64 转换在 `_resolve_image_url`(单个 ~10 行的模块帮手)里完成。**图片本来就公开时,优先用 URL** —— 这样跳过 base64 膨胀,厂商还能缓存。
+
+### 约束 + 实践建议
+
+- **一次 turn 多张图:** DefenseAgent 这边没限。但厂商一般有上限(OpenAI 通常最多 10 张,Qwen-VL 类似)。超了 → 请求失败。
+- **支持的格式:** 看模型。PNG / JPEG 通用;WebP、GIF(只看第一帧)、BMP 多数厂商都支持;HEIC、AVIF 不稳定。
+- **透明通道:** PNG alpha 通道原样透传。视觉模型多半忽略它。
+- **OCR 重的任务:** 别狠缩(高分辨率出效果)、选 OCR 强的模型(`qwen-vl-max`、`gpt-4o`)。
+- **批量处理:** 多张图想批处理时,**多个 `agent.run()` 并发**比一次塞进同一轮更好 —— 总 token 成本一样,但 wall-clock 更快、错误隔离更容易。
+
+### 多步 agent 里图片怎么传
+
+| Agent | 图片携带方式 |
+|---|---|
+| `SimpleAgent` | 一轮一调,图片挂在唯一的 user 消息上。 |
+| `ReActAgent` | **只挂在最初的 user turn**。后续 tool 结果消息保持纯文本 —— LLM 已经看过图,不需要重复挂。 |
+| `PlanAndSolveAgent` | **Phase 1(规划)消息** 和 **Phase 2(每步执行)消息** 都挂同一份图,让每个引用原始任务的阶段都能再看图。Phase 3(综合)是纯文本的 —— 它在每步的文本输出上做总结。 |
+
+也就是说,n 步的 ReAct 看一张图,只有第 1 次调用是带图的,其余 (n-1) 次是纯文本。成本大致是:`1 × (text + image) + (n-1) × text`,不是 n × image。
+
+### Anthropic 限制
+
+Claude 的非文本 content 走 Anthropic 自家的 `{"type": "image", "source": {...}}` block 形态,**不是** OpenAI 的 `{"type": "image_url", ...}`。当前的 `AnthropicAdapter` 不做格式翻译 —— list-shape `content` 进来会抛:
+
+```python
+LLMAdapterError: AnthropicAdapter received list-shape content but does not yet
+support multimodal translation. Use an OpenAI-compatible vision provider, or
+pass plain text content.
+```
+
+`Message` 类型本身已经支持 list content,缺的就是 Anthropic 适配器内部的一个 content-block 翻译。欢迎 PR —— 改动局限在 [`DefenseAgent/llm/anthropic.py`](DefenseAgent/llm/anthropic.py)。
+
+现阶段需要视觉的话:从上面的 OpenAI 兼容厂商里选一个。
 
 ## 自定义与依赖注入
 
