@@ -75,7 +75,7 @@ from DefenseAgent.agent import (
 )
 from DefenseAgent.config import AgentProfile
 
-__version__ = "0.1.4"
+__version__ = "0.1.5"
 
 __all__ = [
     "create_agent",
