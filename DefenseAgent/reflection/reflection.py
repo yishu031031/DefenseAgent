@@ -3,7 +3,7 @@ from typing import Any, Callable
 
 from DefenseAgent.llm import LLM
 from DefenseAgent.llm.types import Message
-from DefenseAgent.memory import Mem0Memory
+from DefenseAgent.memory import Mem0Memory, MemoryOrchestrator, MemoryTier
 from DefenseAgent.memory._bridge import record_memory_type
 from DefenseAgent.ops.logger import _default_clock
 from DefenseAgent.reflection.scorer import ImportanceScorer
@@ -14,11 +14,15 @@ _REFLECTION_MEMORY_TYPE = "reflection"
 
 
 class Reflector:
-    """Module 5's facade: ImportanceScorer + InsightSynthesizer over a mem0-backed `Mem0Memory`; tags reflections via memory_type."""
+    """Module 5's facade: ImportanceScorer + InsightSynthesizer over the
+    memory backend; reflections land in the SEMANTIC tier (the lifecycle
+    bucket Hello-Agents reserves for "distilled facts / lessons / insights")
+    tagged `memory_type=reflection`. Accepts either a bare Mem0Memory or a
+    MemoryOrchestrator — both have `.profile`, `.add()`, `.get_all()`."""
 
     def __init__(
         self,
-        memory: Mem0Memory,
+        memory: Mem0Memory | MemoryOrchestrator,
         llm: LLM,
         *,
         scorer: ImportanceScorer | None = None,
@@ -27,7 +31,10 @@ class Reflector:
         reflection_importance: float = 8.0,
         clock: Callable[[], datetime] | None = None,
     ) -> None:
-        """Wire the scorer + synthesizer; reflection records are written back to mem0 with memory_type=reflection."""
+        """Wire the scorer + synthesizer; reflection records are written into
+        the SEMANTIC tier with `memory_type=reflection`. `reflection_importance`
+        is on the legacy 1-10 scale; it's normalized to [0, 1] before being
+        stored on the MemoryItem so the new scoring layer can use it directly."""
         self.memory = memory
         self.llm = llm
         self.scorer = scorer or ImportanceScorer(llm)
@@ -53,21 +60,29 @@ class Reflector:
         return await self.reflect_now()
 
     async def reflect_now(self) -> list[dict[str, Any]]:
-        """Force a reflection cycle: synthesize insights from unreflected records, write each back tagged memory_type=reflection."""
+        """Force a reflection cycle: synthesize insights from unreflected
+        records and write each into the SEMANTIC tier with the configured
+        reflection importance. The 1-10 reflection_importance is normalized to
+        [0, 1] before storage; clamped on either end so a misconfigured value
+        can't break the MemoryItem invariant."""
         recent = self._get_unreflected_records()
         if not recent:
             return []
         insights = await self.synthesizer.synthesize(recent)
+        normalized_importance = max(0.0, min(1.0, self.reflection_importance / 10.0))
         stored: list[dict[str, Any]] = []
         for insight in insights:
             await self.memory.add(
                 [Message(role="user", content=insight)],
                 memory_type=_REFLECTION_MEMORY_TYPE,
+                tier=MemoryTier.SEMANTIC,
+                importance=normalized_importance,
             )
             stored.append({
                 "memory": insight,
                 "memory_type": _REFLECTION_MEMORY_TYPE,
                 "importance": self.reflection_importance,
+                "tier": MemoryTier.SEMANTIC.value,
             })
         self._last_reflection_time = self._clock()
         return stored

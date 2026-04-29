@@ -260,3 +260,58 @@ async def test_reflector_writes_with_memory_type_reflection():
     assert kwargs.get("memory_type") == "reflection"
     forwarded_messages = args[0]
     assert forwarded_messages[0].content == "new insight"
+
+
+async def test_reflector_writes_into_semantic_tier():
+    """P2: reflections live in the SEMANTIC tier (Hello-Agents lifecycle for
+    distilled facts/lessons), not Episodic. The Reflector should pass tier
+    explicitly so the persistent backend tags metadata correctly."""
+    from DefenseAgent.memory import MemoryTier
+
+    profile = _profile()
+    records = [{"memory": "obs A", "memory_type": "observation"}]
+    memory = _stub_memory(profile, records=records)
+    llm = _stub_llm(["distilled lesson"])
+    reflector = Reflector(memory, llm, num_insights=1, clock=_fixed_clock)
+
+    await reflector.reflect_now()
+    _, kwargs = memory.add.call_args
+    assert kwargs.get("tier") == MemoryTier.SEMANTIC
+
+
+async def test_reflector_normalizes_importance_to_unit_range():
+    """The legacy 1-10 reflection_importance scale must be normalized to
+    [0, 1] before storage so it matches MemoryItem's invariant. 8 → 0.8."""
+    profile = _profile()
+    records = [{"memory": "obs", "memory_type": "observation"}]
+    memory = _stub_memory(profile, records=records)
+    llm = _stub_llm(["insight"])
+    reflector = Reflector(
+        memory, llm,
+        num_insights=1,
+        reflection_importance=8.0,
+        clock=_fixed_clock,
+    )
+
+    await reflector.reflect_now()
+    _, kwargs = memory.add.call_args
+    assert kwargs.get("importance") == 0.8
+
+
+async def test_reflector_clamps_misconfigured_importance():
+    """A reflection_importance set above 10 (misconfig) must not propagate an
+    out-of-range value into MemoryItem and trigger the validator."""
+    profile = _profile()
+    records = [{"memory": "obs", "memory_type": "observation"}]
+    memory = _stub_memory(profile, records=records)
+    llm = _stub_llm(["insight"])
+    reflector = Reflector(
+        memory, llm,
+        num_insights=1,
+        reflection_importance=15.0,
+        clock=_fixed_clock,
+    )
+
+    await reflector.reflect_now()
+    _, kwargs = memory.add.call_args
+    assert kwargs.get("importance") == 1.0

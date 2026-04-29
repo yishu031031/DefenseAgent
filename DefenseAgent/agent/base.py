@@ -10,7 +10,7 @@ from DefenseAgent.agent.config import AgentConfig
 from DefenseAgent.config.profile import AgentProfile
 from DefenseAgent.llm.llm import LLM
 from DefenseAgent.llm.types import Message, TokenUsage, ToolCall
-from DefenseAgent.memory import ContextCompressor, Mem0Memory
+from DefenseAgent.memory import ContextCompressor, Mem0Memory, MemoryOrchestrator
 from DefenseAgent.memory._bridge import record_memory_type
 from DefenseAgent.memory.base import Memory as MemoryTool
 from DefenseAgent.ops import AgentLogger
@@ -149,7 +149,7 @@ class BaseAgent(ABC):
         profile: AgentProfile,
         *,
         llm: LLM,
-        memory: Mem0Memory | None,
+        memory: Mem0Memory | MemoryOrchestrator | None,
         tools: ToolRegistry,
         reflector: Reflector | None = None,
         logger: AgentLogger | None = None,
@@ -431,7 +431,12 @@ class BaseAgent(ABC):
         return [r for r in results if r is not None]
 
     async def _handle_memory_recall(self, arguments: dict[str, Any]) -> str:
-        """Agent-owned handler for the `memory_recall` tool; renders mem0 hits as a bullet list or a diagnostic string."""
+        """Agent-owned handler for the `memory_recall` tool. Renders hits as
+        `- [tier/memory_type] content` bullets so the LLM sees both the
+        lifecycle tier (when present) and the finer memory_type label. Goes
+        through `self.memory.search_records()`, which on a MemoryOrchestrator
+        is a back-compat shim that runs hybrid scoring inside the persistent
+        backend; on a bare Mem0Memory it's the legacy vector-only path."""
         if self.memory is None:
             return "(memory_recall unavailable: memory subsystem disabled)"
 
@@ -453,10 +458,7 @@ class BaseAgent(ABC):
             return f"(memory_recall failed: {type(e).__name__}: {e})"
         if not hits:
             return f"(no memories matched query={query!r})"
-        return "\n".join(
-            f"- [{record_memory_type(h) or 'memory'}] {h.get('memory', '')}"
-            for h in hits
-        )
+        return "\n".join(_format_recall_hit(h) for h in hits)
 
     async def _handle_rag_search(self, arguments: dict[str, Any]) -> str:
         """Agent-owned handler for the `rag_search` tool; renders RAG passages + per-hit resource list, or a diagnostic string.
@@ -615,4 +617,22 @@ def _resolve_image_url(image: "str | Path") -> str:
     encoded = base64.b64encode(path.read_bytes()).decode("ascii")
     return f"data:{mime or _DEFAULT_IMAGE_MIME};base64,{encoded}"
 
+
+def _format_recall_hit(record: dict[str, Any]) -> str:
+    """Render a single mem0 record as a `- [tier/memory_type] content` bullet
+    for the memory_recall tool result. Tier comes from metadata (set by P0+
+    writers); memory_type is the legacy finer label. When neither is present
+    we fall back to a generic `memory` label so legacy records still render
+    sanely. Lifecycle tier first because it's the more important signal for
+    the LLM — a procedural SOP weighs differently than an episodic trace."""
+    metadata = record.get("metadata") or {}
+    tier = metadata.get("tier")
+    memory_type = record_memory_type(record)
+    label_parts: list[str] = []
+    if tier:
+        label_parts.append(str(tier))
+    if memory_type:
+        label_parts.append(str(memory_type))
+    label = "/".join(label_parts) if label_parts else "memory"
+    return f"- [{label}] {record.get('memory', '')}"
 

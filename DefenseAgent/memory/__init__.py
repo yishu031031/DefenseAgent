@@ -7,13 +7,35 @@ from DefenseAgent.memory.base import (
     MemoryError,
     MemoryProviderError,
 )
+from DefenseAgent.memory.consolidator import (
+    ConsolidationStats,
+    MemoryConsolidator,
+)
 from DefenseAgent.memory.context_compressor import ContextCompressor
 from DefenseAgent.memory.mem0_memory import Mem0Memory
+from DefenseAgent.memory.orchestrator import (
+    MemoryOrchestrator,
+    WorkingMemoryProtocol,
+)
 from DefenseAgent.memory.shared import SharedMemoryManager
+from DefenseAgent.memory.types import (
+    DEFAULT_IMPORTANCE,
+    MemoryItem,
+    MemoryTier,
+)
+from DefenseAgent.memory.working import WorkingMemory
 
 __all__ = [
     "Memory",
     "Mem0Memory",
+    "MemoryOrchestrator",
+    "MemoryConsolidator",
+    "ConsolidationStats",
+    "WorkingMemory",
+    "WorkingMemoryProtocol",
+    "MemoryItem",
+    "MemoryTier",
+    "DEFAULT_IMPORTANCE",
     "ContextCompressor",
     "MemoryBackendConfig",
     "SharedMemoryManager",

@@ -163,6 +163,13 @@ def record_memory_type(record: dict[str, Any]) -> str | None:
     return (record.get("metadata") or {}).get("memory_type")
 
 
+def record_tier(record: dict[str, Any]) -> str | None:
+    """Pull the tier label out of a mem0 record. Lives in metadata only — there
+    is no top-level mem0 field for it. Returns None for legacy records written
+    before the tier dimension existed (callers should treat that as EPISODIC)."""
+    return (record.get("metadata") or {}).get("tier")
+
+
 def _resolve_storage_path(
     profile: AgentProfile,
     storage_path: str | Path | None,

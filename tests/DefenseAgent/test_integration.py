@@ -311,6 +311,7 @@ async def test_full_stack_profile_memory_tools_compose(monkeypatch):
     profile = AgentProfile.from_yaml(_example_profile_path())
 
     from DefenseAgent.memory.mem0_memory import Mem0Memory
+    from DefenseAgent.memory.orchestrator import MemoryOrchestrator
     from DefenseAgent.agent import ReActAgent
 
     fake_mem0 = MagicMock(name="mem0")
@@ -328,7 +329,10 @@ async def test_full_stack_profile_memory_tools_compose(monkeypatch):
     try:
         # The agent has the right composed pieces.
         assert agent.profile is profile
-        assert isinstance(agent.memory, Mem0Memory)
+        # P2: agent.memory is now the tier-aware orchestrator wrapping a
+        # Mem0Memory persistent backend.
+        assert isinstance(agent.memory, MemoryOrchestrator)
+        assert isinstance(agent.memory.persistent, Mem0Memory)
         assert "tabular-report" in agent.tools
         assert agent.reflector is not None
     finally:

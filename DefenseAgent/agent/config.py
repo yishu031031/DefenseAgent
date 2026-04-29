@@ -30,7 +30,12 @@ from typing import Any, Callable
 
 from DefenseAgent.config.profile import AgentProfile
 from DefenseAgent.llm.llm import LLM
-from DefenseAgent.memory import ContextCompressor, Mem0Memory, MemoryBackendConfig
+from DefenseAgent.memory import (
+    ContextCompressor,
+    Mem0Memory,
+    MemoryBackendConfig,
+    MemoryOrchestrator,
+)
 from DefenseAgent.ops import AgentLogger
 from DefenseAgent.reflection import Reflector
 from DefenseAgent.tools import ToolRegistry
@@ -161,7 +166,10 @@ class AgentConfig:
     # env-driven construction path for that component. Lets SDK callers,
     # tests, and multi-LLM apps bypass .env entirely.
     llm: LLM | None = None
-    memory: Mem0Memory | None = None
+    # Accepts either a bare Mem0Memory (legacy) or a fully-built
+    # MemoryOrchestrator (new). The builder wraps a Mem0Memory in an
+    # orchestrator transparently, so downstream code always sees the facade.
+    memory: Mem0Memory | MemoryOrchestrator | None = None
     tool_registry: ToolRegistry | None = None
     logger: AgentLogger | None = None
     reflector: Reflector | None = None       # bypass Reflector(memory, llm) construction

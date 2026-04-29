@@ -18,7 +18,8 @@ from typing import Any, Callable
 from DefenseAgent.agent.config import AgentConfig
 from DefenseAgent.config.profile import AgentProfile
 from DefenseAgent.llm.llm import LLM
-from DefenseAgent.memory import ContextCompressor, Mem0Memory
+from DefenseAgent.memory import ContextCompressor, Mem0Memory, MemoryOrchestrator
+from DefenseAgent.memory.working import WorkingMemory
 from DefenseAgent.ops import AgentLogger
 from DefenseAgent.reflection import Reflector
 from DefenseAgent.tools import ToolRegistry
@@ -30,7 +31,11 @@ class BuiltComponents:
     """Bag of fully-wired modules, ready to hand to a `BaseAgent` subclass."""
     profile: AgentProfile
     llm: LLM
-    memory: Mem0Memory | None
+    # Tier-aware facade (P2). Wraps a Mem0Memory persistent backend; agents
+    # interact through the orchestrator's `recall()` / `add_*()` API rather
+    # than reaching into mem0 directly. Callers may still inject a bare
+    # Mem0Memory via AgentConfig — the builder wraps it transparently.
+    memory: MemoryOrchestrator | None
     tools: ToolRegistry
     reflector: Reflector | None
     compressor: ContextCompressor | None
@@ -51,22 +56,38 @@ def build_components_sync(config: AgentConfig) -> BuiltComponents:
         )
 
     # Memory: three-tier priority — fully built > pure-code backend > env.
+    # Whatever the source, we wrap a bare Mem0Memory in a MemoryOrchestrator
+    # so downstream code (BaseAgent, Reflector) only sees the tier-aware
+    # facade with all four lifecycle tiers reachable. An injected
+    # MemoryOrchestrator passes through unchanged.
     if config.memory is not None:
-        memory = config.memory
+        if isinstance(config.memory, MemoryOrchestrator):
+            memory = config.memory
+        else:
+            memory = MemoryOrchestrator(
+                profile,
+                config.memory,
+                working=WorkingMemory.from_profile(profile),
+            )
     elif config.use_memory:
         if config.memory_backend is not None:
-            memory = Mem0Memory.create(
+            persistent = Mem0Memory.create(
                 profile,
                 backend=config.memory_backend,
                 storage_path=config.storage_path,
             )
         else:
-            memory = Mem0Memory(
+            persistent = Mem0Memory(
                 profile,
                 dotenv_path=config.dotenv_path,
                 load_env=False,
                 storage_path=config.storage_path,
             )
+        memory = MemoryOrchestrator(
+            profile,
+            persistent,
+            working=WorkingMemory.from_profile(profile),
+        )
     else:
         memory = None
 

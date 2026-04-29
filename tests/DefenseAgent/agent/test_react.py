@@ -179,7 +179,12 @@ async def test_condense_memory_chain_runs_memory_then_compressor():
         reflect_after_run=False,
     )
     agent = ReActAgent(config)
-    assert agent.memory_tools == [memory, fake_compressor]
+    # P2: builder wraps the bare memory in a MemoryOrchestrator before placing
+    # it in the chain — the orchestrator's `.run()` delegates to the wrapped
+    # persistent backend (the mock), so awaits propagate as expected.
+    assert agent.memory_tools[0] is agent.memory
+    assert agent.memory_tools[1] is fake_compressor
+    assert agent.memory.persistent is memory  # type: ignore[union-attr]
 
     await agent.run("anything", max_steps=2)
 

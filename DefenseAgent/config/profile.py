@@ -48,6 +48,56 @@ class CognitiveConfig(BaseModel):
         return _drop_none_for_keys(data, ("planning_horizon",))
 
 
+class ScoringWeights(BaseModel):
+    """Hybrid retrieval scoring weights, used by `memory.scoring.hybrid_score`.
+    Weights need not sum to 1.0 — overweighting one dimension is intentional
+    when offline evaluation says so. `recency_half_life_days` controls the
+    exponential decay applied to a record's age before it enters the recency
+    term."""
+
+    model_config = _STRICT_MODEL_CONFIG
+
+    similarity: float = Field(ge=0.0, default=0.55)
+    recency: float = Field(ge=0.0, default=0.20)
+    importance: float = Field(ge=0.0, default=0.15)
+    frequency: float = Field(ge=0.0, default=0.10)
+    recency_half_life_days: float = Field(gt=0.0, default=7.0)
+
+
+class TierLimits(BaseModel):
+    """Per-tier capacity and (Working only) TTL. Persistent tiers (Episodic /
+    Semantic / Procedural) are capacity-bounded — eviction is importance-aware
+    and runs in the consolidation job, not on the hot read/write path."""
+
+    model_config = _STRICT_MODEL_CONFIG
+
+    working_capacity: int = Field(ge=1, default=50)
+    working_ttl_seconds: int = Field(ge=1, default=3600)
+    episodic_capacity: int = Field(ge=1, default=1000)
+    semantic_capacity: int = Field(ge=1, default=5000)
+    procedural_capacity: int = Field(ge=1, default=500)
+
+
+class ConsolidationConfig(BaseModel):
+    """Background lifecycle job: promote high-importance items between tiers,
+    decay/evict low-importance ones. Disabled by default — opt in via
+    `enabled: true`. Promotion is one-way (Working → Episodic → Semantic →
+    Procedural) and only fires when an item's importance exceeds the threshold
+    for its target tier; on promotion the item's importance is multiplied by
+    `importance_boost_on_promotion` (capped at 1.0)."""
+
+    model_config = _STRICT_MODEL_CONFIG
+
+    enabled: bool = False
+    interval_seconds: int = Field(ge=1, default=300)
+    promote_to_episodic_threshold: float = Field(ge=0.0, le=1.0, default=0.5)
+    promote_to_semantic_threshold: float = Field(ge=0.0, le=1.0, default=0.7)
+    promote_to_procedural_threshold: float = Field(ge=0.0, le=1.0, default=0.85)
+    importance_boost_on_promotion: float = Field(ge=1.0, default=1.1)
+    forget_below_importance: float = Field(ge=0.0, le=1.0, default=0.3)
+    forget_idle_days: int = Field(ge=1, default=30)
+
+
 class MemoryConfig(BaseModel):
     """Memory subsystem configuration matching ms-agent's mem0-backed scheme: storage, search, compaction, ingestion knobs."""
 
@@ -65,6 +115,15 @@ class MemoryConfig(BaseModel):
     prune_minimum: int = Field(ge=0, default=20_000)
     reserved_buffer: int = Field(ge=0, default=20_000)
     enable_summary: bool = True
+
+    # --- Tier-aware extensions (P0+, see memory/types.py) -----------------
+    # Default importance attached to writes that don't set one explicitly.
+    # 0.5 is the neutral midpoint — the orchestrator neither protects nor
+    # early-evicts records at this value.
+    default_importance: float = Field(ge=0.0, le=1.0, default=0.5)
+    scoring: ScoringWeights = Field(default_factory=ScoringWeights)
+    tier_limits: TierLimits = Field(default_factory=TierLimits)
+    consolidation: ConsolidationConfig = Field(default_factory=ConsolidationConfig)
 
 
 class RAGConfig(BaseModel):
