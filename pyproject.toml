@@ -88,12 +88,6 @@ Changelog = "https://github.com/yishu031031/DefenseAgent/blob/main/CHANGELOG.md"
 [tool.hatch.build.targets.wheel]
 packages = ["DefenseAgent"]
 
-# Force-include the bundled methodology skills (builtin/). `packages =` only
-# picks up Python files by default, so SKILL.md and shipped helper scripts
-# would otherwise be stripped from the wheel.
-[tool.hatch.build.targets.wheel.force-include]
-"DefenseAgent/skills/builtin" = "DefenseAgent/skills/builtin"
-
 [tool.hatch.build.targets.sdist]
 include = [
     "DefenseAgent",
