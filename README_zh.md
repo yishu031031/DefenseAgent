@@ -18,12 +18,12 @@
 
 ## ✨ 亮点
 
-- 🧾 **一份文件定义 Agent** —— 身份、LLM、工具、记忆、RAG、提示词全部写在一份严格校验的 YAML 里。未知字段在加载时直接报错（`extra="forbid"`）。
-- 🔌 **供应商无关** —— `openai`、`anthropic`、`deepseek`、`qwen`、`google`、`vllm`。改 `.env` 即可切换，无需改代码。
-- 🎯 **三种执行策略** —— `SimpleAgent`（单次）、`ReActAgent`（工具循环）、`PlanAndSolveAgent`（规划→执行→综合）。都基于同一份 `AgentConfig`。
-- 🧠 **分层记忆架构（0.2.0）** —— 四个生命周期 tier（Working / Episodic / Semantic / Procedural），混合打分（相似度 × 时效 × 重要性 × 频次），可选后台 consolidation。
-- 🛠️ **三种工具来源，一个注册表** —— 本地 skill 包（`SKILL.md`）、MCP 服务器（stdio / SSE / WebSocket / streamable-http）、Python 可调用对象（按文件路径或点分模块）。
-- 🖼️ **可选 RAG + 视觉** —— 放文档进目录得到 `rag_search` 工具；传 `images=[…]` 走多模态。**默认关闭** —— 用到才付出代价。
+- 🧩 **单 Agent 的认知框架** —— DefenseAgent 将大模型能力组织成可运行、可扩展、可复用的智能体框架，让开发者不再从零处理模型调用、工具调度、上下文管理和执行流程。
+- 🧾 **结构化配置优先** —— 通过一份严格校验的 YAML profile 定义身份、模型、提示词和能力边界。相比直接把文本塞进 prompt，这种方式更清晰、更可维护，也更适合持续扩展。
+- 🔌 **多模型统一接入** —— 支持 OpenAI、Anthropic、DeepSeek、Qwen、Google、vLLM 等模型服务。模型选择可以通过配置切换，业务代码保持稳定。
+- 🎯 **按任务复杂度选择运行方式** —— 从简单问答，到 ReAct 工具调用，再到 Plan and Solve 规划执行，SDK 将不同推理流程封装为统一接口，方便根据场景选择合适策略。
+- 🛠️ **让 Agent 真正连接外部能力** —— 工具系统支持本地 Python 能力、Skill 包和 MCP 服务，使 Agent 不只生成文本，也能调用外部系统完成具体任务。
+- 🧠 **面向长任务的增强机制** —— 通过分层记忆、RAG 检索、上下文压缩、反思机制和多模态输入，提升长流程任务中的稳定性、知识覆盖和推理质量。
 
 ## 🎬 应用展示
 

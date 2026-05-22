@@ -18,12 +18,12 @@ We appreciate your support! Help us grow and improve by giving DefenseAgent a �
 
 ## ✨ Highlights
 
-- 🧾 **One-file agent definition** — Identity, LLM, tools, memory, RAG, prompt — all in one strictly-validated YAML. Unknown fields fail loudly at load (`extra="forbid"`).
-- 🔌 **Provider-agnostic** — `openai`, `anthropic`, `deepseek`, `qwen`, `google`, `vllm`. Swap providers via `.env`, no code change.
-- 🎯 **Three execution strategies** — `SimpleAgent` (one-shot), `ReActAgent` (tool loop), `PlanAndSolveAgent` (plan→execute→synthesise). All from the same `AgentConfig`.
-- 🧠 **Tier-aware memory (0.2.0)** — Four lifecycle tiers (Working / Episodic / Semantic / Procedural), hybrid scoring (similarity × recency × importance × frequency), optional background consolidation.
-- 🛠️ **Three tool sources, one registry** — Local skill bundles (`SKILL.md`), MCP servers (stdio / SSE / WebSocket / streamable-http), Python callables (by file path or dotted module).
-- 🖼️ **Optional RAG + vision** — Drop documents in for a `rag_search` tool; pass `images=[…]` for multimodal turns. Disabled by default — you only pay when you use them.
+- 🧩 **A cognitive framework for single agents** — DefenseAgent organizes LLM capabilities into a runnable, extensible and reusable agent framework, so developers do not need to rebuild model calls, tool orchestration, context handling and execution loops from scratch.
+- 🧾 **Structured configuration first** — Define identity, model, prompts and capability boundaries in one strictly validated YAML profile. Compared with injecting everything into a prompt, this is clearer, easier to maintain and better suited for long-term extension.
+- 🔌 **Unified multi-model access** — Support OpenAI, Anthropic, DeepSeek, Qwen, Google, vLLM and other compatible providers. Model choices can be switched by configuration while application code stays stable.
+- 🎯 **Execution modes for different task complexity** — From simple QA, to ReAct tool use, to Plan and Solve planning, the SDK exposes different reasoning flows through one consistent interface.
+- 🛠️ **Connect agents to real external capabilities** — The tool system supports local Python functions, Skill bundles and MCP services, enabling agents to call external systems instead of only generating text.
+- 🧠 **Enhancements for long-running tasks** — Tier-aware memory, RAG retrieval, context compression, reflection and multimodal input improve stability, knowledge coverage and reasoning quality in longer workflows.
 
 ## 🎬 Application Showcase
 
