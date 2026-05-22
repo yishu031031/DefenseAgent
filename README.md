@@ -4,9 +4,7 @@
 
 <div align="center">
 
-# DefenseAgent
-
-**Open-source single-agent SDK · A cognitive core for intelligent applications**
+We appreciate your support! Help us grow and improve by giving DefenseAgent a 🌟 star on GitHub!
 
 [English](README.md) · [中文 README](README_zh.md)
 

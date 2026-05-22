@@ -4,9 +4,7 @@
 
 <div align="center">
 
-# DefenseAgent
-
-**开源单 Agent SDK · 面向智能体应用的完整认知框架**
+感谢您的支持！为 DefenseAgent 点亮一颗 🌟 Star，帮助我们不断成长和完善！
 
 [English](README.md) · [中文 README](README_zh.md)
 
