@@ -16,13 +16,28 @@
 
 ---
 
-DefenseAgent 是一个面向单 Agent LLM 应用的 Python 框架。在一份严格校验的 YAML profile 里描述你的 agent —— 身份、LLM 供应商、工具、记忆、RAG、提示词 —— 然后一行代码实例化，在三种执行策略之一上运行任务。
+## ✨ 亮点
 
-它也作为 **SEU Agent Town 智能体小镇** 的认知内核，为小镇中的智能体提供模型编排、工具调用、记忆管理、知识检索、任务规划和行动执行能力。
+- 🧾 **一份文件定义 Agent** —— 身份、LLM、工具、记忆、RAG、提示词全部写在一份严格校验的 YAML 里。未知字段在加载时直接报错（`extra="forbid"`）。
+- 🔌 **供应商无关** —— `openai`、`anthropic`、`deepseek`、`qwen`、`google`、`vllm`。改 `.env` 即可切换，无需改代码。
+- 🎯 **三种执行策略** —— `SimpleAgent`（单次）、`ReActAgent`（工具循环）、`PlanAndSolveAgent`（规划→执行→综合）。都基于同一份 `AgentConfig`。
+- 🧠 **分层记忆架构（0.2.0）** —— 四个生命周期 tier（Working / Episodic / Semantic / Procedural），混合打分（相似度 × 时效 × 重要性 × 频次），可选后台 consolidation。
+- 🛠️ **三种工具来源，一个注册表** —— 本地 skill 包（`SKILL.md`）、MCP 服务器（stdio / SSE / WebSocket / streamable-http）、Python 可调用对象（按文件路径或点分模块）。
+- 🖼️ **可选 RAG + 视觉** —— 放文档进目录得到 `rag_search` 工具；传 `images=[…]` 走多模态。**默认关闭** —— 用到才付出代价。
+
+## 🎬 应用展示
+
+### SEU Agent Town 智能体小镇
+
+DefenseAgent 作为 **SEU Agent Town 智能体小镇** 的认知内核，为小镇中的智能体提供模型编排、工具调用、记忆管理、知识检索、任务规划和行动执行能力。
 
 <p align="center">
   <img src="docs/assets/seu_agent_town_panorama.png" alt="SEU Agent Town 智能体小镇全景图" width="100%">
 </p>
+
+## 简介
+
+DefenseAgent 是一个面向单 Agent LLM 应用的 Python 框架。在一份严格校验的 YAML profile 里描述你的 agent —— 身份、LLM 供应商、工具、记忆、RAG、提示词 —— 然后一行代码实例化，在三种执行策略之一上运行任务。
 
 ```python
 from DefenseAgent.agent import AgentConfig, ReActAgent
@@ -31,15 +46,6 @@ from DefenseAgent.examples import EXAMPLE_PROFILE_PATH
 agent = ReActAgent(AgentConfig(profile=EXAMPLE_PROFILE_PATH))
 result = await agent.run("用一句话总结今天的计划。")
 ```
-
-## 核心特性
-
-- 🧾 **一份文件定义 Agent** —— 身份、LLM、工具、记忆、RAG、提示词全部写在一份严格校验的 YAML 里。未知字段在加载时直接报错（`extra="forbid"`）。
-- 🔌 **供应商无关** —— `openai`、`anthropic`、`deepseek`、`qwen`、`google`、`vllm`。改 `.env` 即可切换，无需改代码。
-- 🎯 **三种执行策略** —— `SimpleAgent`（单次）、`ReActAgent`（工具循环）、`PlanAndSolveAgent`（规划→执行→综合）。都基于同一份 `AgentConfig`。
-- 🧠 **分层记忆架构（0.2.0）** —— 四个生命周期 tier（Working / Episodic / Semantic / Procedural），混合打分（相似度 × 时效 × 重要性 × 频次），可选后台 consolidation。
-- 🛠️ **三种工具来源，一个注册表** —— 本地 skill 包（`SKILL.md`）、MCP 服务器（stdio / SSE / WebSocket / streamable-http）、Python 可调用对象（按文件路径或点分模块）。
-- 🖼️ **可选 RAG + 视觉** —— 放文档进目录得到 `rag_search` 工具；传 `images=[…]` 走多模态。**默认关闭** —— 用到才付出代价。
 
 ## 安装
 

@@ -16,13 +16,28 @@ We appreciate your support! Help us grow and improve by giving DefenseAgent a �
 
 ---
 
-DefenseAgent is a Python harness for single-agent LLM applications. Describe your agent in one strictly-validated YAML profile — identity, LLM provider, tools, memory, RAG, prompts — then instantiate it with one line and run tasks against any of three execution strategies.
+## ✨ Highlights
 
-It is also used as the cognitive core of **SEU Agent Town**, where town agents rely on DefenseAgent for model orchestration, tool use, memory, knowledge retrieval, planning and execution.
+- 🧾 **One-file agent definition** — Identity, LLM, tools, memory, RAG, prompt — all in one strictly-validated YAML. Unknown fields fail loudly at load (`extra="forbid"`).
+- 🔌 **Provider-agnostic** — `openai`, `anthropic`, `deepseek`, `qwen`, `google`, `vllm`. Swap providers via `.env`, no code change.
+- 🎯 **Three execution strategies** — `SimpleAgent` (one-shot), `ReActAgent` (tool loop), `PlanAndSolveAgent` (plan→execute→synthesise). All from the same `AgentConfig`.
+- 🧠 **Tier-aware memory (0.2.0)** — Four lifecycle tiers (Working / Episodic / Semantic / Procedural), hybrid scoring (similarity × recency × importance × frequency), optional background consolidation.
+- 🛠️ **Three tool sources, one registry** — Local skill bundles (`SKILL.md`), MCP servers (stdio / SSE / WebSocket / streamable-http), Python callables (by file path or dotted module).
+- 🖼️ **Optional RAG + vision** — Drop documents in for a `rag_search` tool; pass `images=[…]` for multimodal turns. Disabled by default — you only pay when you use them.
+
+## 🎬 Application Showcase
+
+### SEU Agent Town
+
+DefenseAgent is used as the cognitive core of **SEU Agent Town**, where town agents rely on DefenseAgent for model orchestration, tool use, memory, knowledge retrieval, planning and execution.
 
 <p align="center">
   <img src="docs/assets/seu_agent_town_panorama.png" alt="SEU Agent Town panorama" width="100%">
 </p>
+
+## Introduction
+
+DefenseAgent is a Python harness for single-agent LLM applications. Describe your agent in one strictly-validated YAML profile — identity, LLM provider, tools, memory, RAG, prompts — then instantiate it with one line and run tasks against any of three execution strategies.
 
 ```python
 from DefenseAgent.agent import AgentConfig, ReActAgent
@@ -31,15 +46,6 @@ from DefenseAgent.examples import EXAMPLE_PROFILE_PATH
 agent = ReActAgent(AgentConfig(profile=EXAMPLE_PROFILE_PATH))
 result = await agent.run("Summarise today's plan in one sentence.")
 ```
-
-## Highlights
-
-- 🧾 **One-file agent definition** — Identity, LLM, tools, memory, RAG, prompt — all in one strictly-validated YAML. Unknown fields fail loudly at load (`extra="forbid"`).
-- 🔌 **Provider-agnostic** — `openai`, `anthropic`, `deepseek`, `qwen`, `google`, `vllm`. Swap providers via `.env`, no code change.
-- 🎯 **Three execution strategies** — `SimpleAgent` (one-shot), `ReActAgent` (tool loop), `PlanAndSolveAgent` (plan→execute→synthesise). All from the same `AgentConfig`.
-- 🧠 **Tier-aware memory (0.2.0)** — Four lifecycle tiers (Working / Episodic / Semantic / Procedural), hybrid scoring (similarity × recency × importance × frequency), optional background consolidation.
-- 🛠️ **Three tool sources, one registry** — Local skill bundles (`SKILL.md`), MCP servers (stdio / SSE / WebSocket / streamable-http), Python callables (by file path or dotted module).
-- 🖼️ **Optional RAG + vision** — Drop documents in for a `rag_search` tool; pass `images=[…]` for multimodal turns. Disabled by default — you only pay when you use them.
 
 ## Install
 
