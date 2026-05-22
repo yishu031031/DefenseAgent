@@ -1,16 +1,30 @@
+<p align="center">
+  <img src="docs/assets/defenseagent_overview_en.png" alt="DefenseAgent overview" width="100%">
+</p>
+
+<div align="center">
+
 # DefenseAgent
 
-> **English** · [中文 README](README_zh.md)
+**Open-source single-agent SDK · A cognitive core for intelligent applications**
+
+[English](README.md) · [中文 README](README_zh.md)
 
 [![PyPI](https://img.shields.io/pypi/v/defense-agent.svg)](https://pypi.org/project/defense-agent/)
 [![Python](https://img.shields.io/pypi/pyversions/defense-agent.svg)](https://pypi.org/project/defense-agent/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-**Build LLM agents from one YAML file. Run with one line of Python.**
+</div>
 
 ---
 
 DefenseAgent is a Python harness for single-agent LLM applications. Describe your agent in one strictly-validated YAML profile — identity, LLM provider, tools, memory, RAG, prompts — then instantiate it with one line and run tasks against any of three execution strategies.
+
+It is also used as the cognitive core of **SEU Agent Town**, where town agents rely on DefenseAgent for model orchestration, tool use, memory, knowledge retrieval, planning and execution.
+
+<p align="center">
+  <img src="docs/assets/seu_agent_town_panorama.png" alt="SEU Agent Town panorama" width="100%">
+</p>
 
 ```python
 from DefenseAgent.agent import AgentConfig, ReActAgent

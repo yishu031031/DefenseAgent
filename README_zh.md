@@ -1,16 +1,30 @@
+<p align="center">
+  <img src="docs/assets/defenseagent_overview_zh.png" alt="DefenseAgent 项目概览" width="100%">
+</p>
+
+<div align="center">
+
 # DefenseAgent
 
-> [English](README.md) · **中文**
+**开源单 Agent SDK · 面向智能体应用的完整认知框架**
+
+[English](README.md) · [中文 README](README_zh.md)
 
 [![PyPI](https://img.shields.io/pypi/v/defense-agent.svg)](https://pypi.org/project/defense-agent/)
 [![Python](https://img.shields.io/pypi/pyversions/defense-agent.svg)](https://pypi.org/project/defense-agent/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-**用一份 YAML 文件构建 LLM Agent，一行 Python 就能跑起来。**
+</div>
 
 ---
 
 DefenseAgent 是一个面向单 Agent LLM 应用的 Python 框架。在一份严格校验的 YAML profile 里描述你的 agent —— 身份、LLM 供应商、工具、记忆、RAG、提示词 —— 然后一行代码实例化，在三种执行策略之一上运行任务。
+
+它也作为 **SEU Agent Town 智能体小镇** 的认知内核，为小镇中的智能体提供模型编排、工具调用、记忆管理、知识检索、任务规划和行动执行能力。
+
+<p align="center">
+  <img src="docs/assets/seu_agent_town_panorama.png" alt="SEU Agent Town 智能体小镇全景图" width="100%">
+</p>
 
 ```python
 from DefenseAgent.agent import AgentConfig, ReActAgent
